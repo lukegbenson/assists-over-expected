@@ -27,4 +27,5 @@ class Game:
         self.guest_team = Team(event['visitor']['teamid'])
 
     def start(self):
+        assert self.event is not None, "call read_json() before start()"
         self.event.show()

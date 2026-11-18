@@ -50,11 +50,11 @@ class Event:
         start_moment = self.moments[0]
         player_dict = self.player_ids_dict
 
-        clock_info = ax.annotate('', xy=[Constant.X_CENTER, Constant.Y_CENTER],
+        clock_info = ax.annotate('', xy=(Constant.X_CENTER, Constant.Y_CENTER),
                                  color='black', horizontalalignment='center',
                                    verticalalignment='center')
 
-        annotations = [ax.annotate(self.player_ids_dict[player.id][1], xy=[0, 0], color='w',
+        annotations = [ax.annotate(self.player_ids_dict[player.id][1], xy=(0, 0), color='w',
                                    horizontalalignment='center',
                                    verticalalignment='center', fontweight='bold')
                        for player in start_moment.players]
@@ -81,13 +81,14 @@ class Event:
                               fontsize=Constant.FONTSIZE,
                               cellLoc='center')
         table.scale(1, Constant.SCALE)
-        table_cells = table.properties()['child_artists']
-        for cell in table_cells:
-            cell._text.set_color('white')
+        # table.properties()['child_artists'] was removed from matplotlib after
+        # this script was written; get_celld() is the modern equivalent.
+        for cell in table.get_celld().values():
+            cell.get_text().set_color('white')
 
-        player_circles = [plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE, color=player.color)
+        player_circles = [Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE, color=player.color)
                           for player in start_moment.players]
-        ball_circle = plt.Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
+        ball_circle = Circle((0, 0), Constant.PLAYER_CIRCLE_SIZE,
                                  color=start_moment.ball.color)
         for circle in player_circles:
             ax.add_patch(circle)
@@ -98,6 +99,6 @@ class Event:
                          fargs=(player_circles, ball_circle, annotations, clock_info),
                          frames=len(self.moments), interval=Constant.INTERVAL)
         court = plt.imread("court.png")
-        plt.imshow(court, zorder=0, extent=[Constant.X_MIN, Constant.X_MAX - Constant.DIFF,
-                                            Constant.Y_MAX, Constant.Y_MIN])
+        plt.imshow(court, zorder=0, extent=(Constant.X_MIN, Constant.X_MAX - Constant.DIFF,
+                                            Constant.Y_MAX, Constant.Y_MIN))
         plt.show()
