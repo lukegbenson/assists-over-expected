@@ -12,8 +12,10 @@ from nba_assists.config import (
     format_game_id,
     get_config,
     load_config,
+    parquet_compression,
     project_paths,
     repo_root,
+    resolve_device,
     seed_everything,
 )
 
@@ -61,44 +63,36 @@ def test_ball_sentinels(cfg):
     assert cfg.sentinels.ball_player_id == -1
 
 
-def test_frame_rate_and_period_length(cfg):
+def test_tracking_frame_rate_and_players(cfg):
     assert cfg.tracking.source_frame_rate_hz == 25.0
-    assert cfg.tracking.period_length_s == 720.0
     assert cfg.tracking.players_on_court == 10
+    assert cfg.tracking.game_id_length == 10
 
 
-def test_window_margins_present_and_ordered(cfg):
-    w = cfg.windows
-    assert w.pre_margin_s > 0
-    assert w.post_margin_s > 0
-    assert w.min_length_s < w.max_length_s
+def test_pbp_event_types_and_no_player_sentinel(cfg):
+    assert cfg.pbp.no_player_sentinel == 0
+    assert cfg.pbp.event_types.made_shot == 1
+    assert cfg.pbp.event_types.rebound == 4
 
 
-def test_thresholds_are_physically_sane(cfg):
-    assert 0 < cfg.possession.max_dist_ft < cfg.possession.release_dist_ft
-    assert cfg.pass_detection.min_duration_s < cfg.pass_detection.max_duration_s
-    assert cfg.pass_detection.max_apex_height_ft > cfg.court.rim_height_z
+def test_inventory_thresholds(cfg):
+    inv = cfg.inventory
+    assert 0 < inv.min_minutes_required
+    assert 0 < inv.max_missing_frame_share < 1
+    assert inv.max_gap_running_s > 0
 
 
-def test_model_sizes_present(cfg):
-    assert len(cfg.model.mlp.hidden_sizes) >= 1
-    assert all(h > 0 for h in cfg.model.mlp.hidden_sizes)
-    assert cfg.model.lstm.hidden_size > 0
-
-
-def test_splits_are_by_game_and_sum_to_one(cfg):
-    s = cfg.splits
-    assert s.split_by == "game"
-    assert math.isclose(
-        s.train_fraction + s.val_fraction + s.test_fraction, 1.0, abs_tol=1e-9
-    )
+def test_makes_qa_assisted_share_range(cfg):
+    qa = cfg.makes_qa
+    assert 0 < qa.expected_assisted_share_min < qa.expected_assisted_share_max < 1
 
 
 def test_seeds_present(cfg):
     seeds = cfg.seeds
     assert isinstance(seeds["global"], int)
     assert seeds.global_ == seeds["global"]
-    assert isinstance(seeds.split, int)
+    assert isinstance(seeds.numpy, int)
+    assert isinstance(seeds.torch, int)
 
 
 def test_seed_everything_is_reproducible(cfg):
@@ -108,6 +102,20 @@ def test_seed_everything_is_reproducible(cfg):
     first = [random.random() for _ in range(5)]
     seed_everything(cfg)
     assert [random.random() for _ in range(5)] == first
+
+
+def test_resolve_device_returns_a_concrete_device(cfg):
+    assert resolve_device(cfg) in ("cpu", "cuda", "mps")
+
+
+def test_parquet_compression_is_a_valid_codec(cfg):
+    assert parquet_compression(cfg) in ("snappy", "gzip", "brotli", "lz4", "zstd")
+
+
+def test_parquet_compression_rejects_unknown_codec():
+    cfg = Config({"runtime": {"parquet_compression": "not-a-real-codec"}})
+    with pytest.raises(ValueError):
+        parquet_compression(cfg)
 
 
 def test_paths_resolve_under_repo_root(cfg):

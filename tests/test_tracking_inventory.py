@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-
-from tracking_inventory import parse_date_from_filename, read_roster_teams  # noqa: E402
+# scripts/ is on the path via [tool.pytest.ini_options] pythonpath in
+# pyproject.toml (also declared under [tool.pyright] extraPaths, for the type
+# checker, which doesn't execute a sys.path.insert() the way pytest does).
+from tracking_inventory import parse_date_from_filename, read_roster_teams
 
 
 @pytest.mark.parametrize(
