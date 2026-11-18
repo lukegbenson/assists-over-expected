@@ -1,0 +1,23 @@
+# Data and model artifacts are never committed
+data/
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store
+.tmp/
+
+# Notebook outputs land in reports/, not in git history
+notebooks/*.html
