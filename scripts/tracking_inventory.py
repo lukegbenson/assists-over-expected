@@ -2,7 +2,8 @@
 
 Reads every Parquet in data/tracking (one per game, per PROJECT.md), computes
 frame-level coverage and integrity stats per game, and writes one row per
-game to reports/tracking_inventory.csv.
+game to reports/tracking_inventory.csv, plus a high-level summary to
+reports/tracking_inventory_summary.md.
 
     .venv/bin/python scripts/tracking_inventory.py
 
@@ -27,6 +28,7 @@ from __future__ import annotations
 import csv
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 import duckdb
@@ -190,6 +192,89 @@ def inventory_row(parquet_path: Path, roster_dir: Path, cfg, con: duckdb.DuckDBP
     }
 
 
+# max_gap_running_ms trips on nearly every game (see PROJECT.md: clip
+# boundaries between events routinely land mid-possession), so it's noise in
+# a summary meant to surface real defects. A game whose only flag reason is
+# this one is excluded from the report below; games also flagged for another
+# reason still show it alongside that reason.
+GAP_REASON_LABEL = "max_gap_running_ms"
+
+
+def _flag_labels(flag_reasons: str) -> list[str]:
+    """flag_reasons -> the condition name that tripped each reason."""
+    if not flag_reasons:
+        return []
+    return [
+        re.split(r"[<>=]", reason, maxsplit=1)[0] for reason in flag_reasons.split("; ")
+    ]
+
+
+def write_summary(
+    rows: list[dict], failures: list[tuple[str, str]], report_path: Path
+) -> None:
+    n_games = len(rows)
+    notable = [
+        r for r in rows if any(l != GAP_REASON_LABEL for l in _flag_labels(r["flag_reasons"]))
+    ]
+    n_notable = len(notable)
+    n_gap_only = sum(1 for r in rows if r["flagged"]) - n_notable
+
+    minutes = [r["minutes_covered"] for r in rows]
+    avg_minutes = sum(minutes) / n_games if n_games else float("nan")
+
+    reason_counts: Counter[str] = Counter()
+    for r in notable:
+        for label in _flag_labels(r["flag_reasons"]):
+            if label != GAP_REASON_LABEL:
+                reason_counts[label] += 1
+
+    lines = [
+        "# Tracking inventory, 2015-16",
+        "",
+        f"- **Games:** {n_games:,}",
+        f"- **Flagged for a reason other than {GAP_REASON_LABEL}:** {n_notable:,}",
+        f"- **Flagged only for {GAP_REASON_LABEL} (not shown below, see "
+        "PROJECT.md):** "
+        f"{n_gap_only:,}",
+        f"- **Failed to process:** {len(failures):,}",
+        f"- **Average minutes covered per game:** {avg_minutes:.1f}",
+        "",
+        "## Flag reasons (excluding the near-universal max_gap_running_ms)",
+        "",
+        "| reason | games |",
+        "|---|---|",
+    ]
+    for label, count in reason_counts.most_common():
+        lines.append(f"| {label} | {count:,} |")
+
+    if notable:
+        lines += [
+            "",
+            "## Flagged games",
+            "",
+            "| game_id | date | minutes_covered | flag_reasons |",
+            "|---|---|---|---|",
+        ]
+        for r in notable:
+            lines.append(
+                f"| {r['game_id']} | {r['date']} | {r['minutes_covered']} | "
+                f"{r['flag_reasons']} |"
+            )
+
+    if failures:
+        lines += [
+            "",
+            "## Files that failed to process",
+            "",
+            "| file | error |",
+            "|---|---|",
+        ]
+        for name, err in failures:
+            lines.append(f"| {name} | {err} |")
+
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     cfg = get_config()
     tracking_dir = cfg.get_path("tracking")
@@ -222,8 +307,12 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(rows)
 
+    summary_path = reports_dir / "tracking_inventory_summary.md"
+    write_summary(rows, failures, summary_path)
+
     n_flagged = sum(1 for r in rows if r["flagged"])
     print(f"wrote {out_path} ({len(rows)} rows)")
+    print(f"wrote {summary_path}")
     print(
         f"summary: games={len(parquet_files)} written={len(rows)} "
         f"flagged={n_flagged} failed={len(failures)}"

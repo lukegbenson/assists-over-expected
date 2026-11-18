@@ -97,7 +97,9 @@ that another step would want to reuse.
   itself, not the filename — see Repository layout), `date`, `home_team`,
   `away_team`, `frame_count`, `minutes_covered`, `share_frames_11_rows`,
   `share_frames_ball_missing`, `quarters_present`, `max_gap_ms`,
-  `max_gap_running_ms`, `flagged`, `flag_reasons`.
+  `max_gap_running_ms`, `flagged`, `flag_reasons`; and a high-level summary to
+  `reports/tracking_inventory_summary.md` (games flagged, by what reason, and
+  the list of flagged games).
 * `minutes_covered` is `frame_count / tracking.source_frame_rate_hz / 60`: the
   amount of sampled game time actually captured, not the wall-clock span
   between the first and last frame (which also counts quarter breaks and
