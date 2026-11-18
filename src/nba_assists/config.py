@@ -15,12 +15,18 @@ import os
 import random
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Literal, Mapping, cast
 
 import yaml
 
 CONFIG_FILENAME = "config.yaml"
+# for setting a test config without editing the real config.yaml
 CONFIG_ENV_VAR = "NBA_ASSISTS_CONFIG"
+
+ParquetCompression = Literal["snappy", "gzip", "brotli", "lz4", "zstd"]
+_PARQUET_COMPRESSIONS: tuple[ParquetCompression, ...] = (
+    "snappy", "gzip", "brotli", "lz4", "zstd",
+)
 
 # ``global`` is a Python keyword, so ``cfg.seeds.global_`` is the attribute form.
 _KEYWORD_SUFFIX = "_"
@@ -170,6 +176,24 @@ def seed_everything(cfg: Config | None = None) -> int:
         pass
 
     return base
+
+
+def parquet_compression(cfg: Config | None = None) -> ParquetCompression:
+    """``runtime.parquet_compression``, validated and typed for to_parquet().
+
+    pandas/pyarrow type the ``compression`` parameter as a ``Literal`` of five
+    known codecs, not a plain ``str`` — passing ``str(cfg...)`` directly type
+    checks as "no overload matches" even though the value is fine at runtime.
+    Read it through here instead of inlining the cast at every call site.
+    """
+    cfg = cfg or get_config()
+    value = str(cfg["runtime"]["parquet_compression"])
+    if value not in _PARQUET_COMPRESSIONS:
+        raise ValueError(
+            f"config.yaml runtime.parquet_compression={value!r} is not one of "
+            f"{_PARQUET_COMPRESSIONS}"
+        )
+    return cast(ParquetCompression, value)
 
 
 def resolve_device(cfg: Config | None = None) -> str:
