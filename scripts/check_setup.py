@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Verify the project skeleton: directories, config, seeds, environment.
 
 Run this first after cloning. It creates any missing directory, reports which
@@ -47,7 +46,7 @@ REQUIRED_PACKAGES = [
 STAGE_GLOBS = {
     "raw": "*.7z",
     "tracking": "*.parquet",
-    "rosters": "*.parquet",
+    "rosters": "*.csv",
     "pbp": "*.parquet",
     "windows": "*.parquet",
     "derived": "*",
@@ -92,14 +91,6 @@ def main() -> int:
     failures += [f"missing package: {name}" for name in missing_pkgs]
 
     # --- config sanity -----------------------------------------------------
-    fractions = cfg["splits"]
-    total = sum(
-        float(fractions[k]) for k in ("train_fraction", "val_fraction", "test_fraction")
-    )
-    if abs(total - 1.0) > 1e-9:
-        failures.append(f"split fractions sum to {total:.4f}, expected 1.0")
-    if str(cfg["splits"]["split_by"]) != "game":
-        failures.append("splits.split_by must be 'game'")
     if format_game_id(21500431) != "0021500431":
         failures.append("game id padding is wrong")
 

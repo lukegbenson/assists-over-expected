@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build a per-game QA inventory of the tracking Parquet files.
 
 Reads every Parquet in data/tracking (one per game, per PROJECT.md), computes
@@ -68,9 +67,10 @@ ordered AS (
 SELECT
     ANY_VALUE(game_id)                                       AS game_id,
     COUNT(*)                                                 AS frame_count,
-    AVG(CASE WHEN n_rows = 11 THEN 1.0 ELSE 0.0 END)          AS share_frames_11_rows,
+    AVG(CASE WHEN n_rows = {players_on_court} + 1
+             THEN 1.0 ELSE 0.0 END)                           AS share_frames_11_rows,
     AVG(CASE WHEN n_ball_rows = 0 THEN 1.0 ELSE 0.0 END)      AS share_frames_ball_missing,
-    AVG(CASE WHEN n_player_rows < 10 OR n_ball_rows = 0
+    AVG(CASE WHEN n_player_rows < {players_on_court} OR n_ball_rows = 0
              THEN 1.0 ELSE 0.0 END)                           AS share_frames_missing_object,
     MAX(ts_ms - prev_ts_ms)                                   AS max_gap_ms,
     MAX(CASE WHEN quarter = prev_quarter
@@ -123,10 +123,18 @@ def parse_date_from_filename(stem: str) -> str | None:
 
 def inventory_row(parquet_path: Path, roster_dir: Path, cfg, con: duckdb.DuckDBPyConnection) -> dict:
     ball_team_id = int(cfg.sentinels.ball_team_id)
-    sql = FRAME_STATS_SQL.format(ball_team_id=ball_team_id)
+    players_on_court = int(cfg.tracking.players_on_court)
+    sql = FRAME_STATS_SQL.format(ball_team_id=ball_team_id, players_on_court=players_on_court)
     result = con.execute(sql, [str(parquet_path)]).fetchone()
-    cols = [d[0] for d in con.description]
-    stats = dict(zip(cols, result))
+    if result is None:
+        # Can't happen for this query in practice: it has no GROUP BY, so the
+        # aggregates always produce exactly one row, even over zero input
+        # rows (an empty tracking Parquet, e.g.). Guarded anyway rather than
+        # asserted away, since fetchone()'s declared return type is
+        # Optional and a future edit to the query could make it a real path.
+        raise RuntimeError(f"aggregate query returned no row for {parquet_path}")
+    cols: list[str] = [d[0] for d in con.description]
+    stats = {col: val for col, val in zip(cols, result)}
 
     frame_rate = float(cfg.tracking.source_frame_rate_hz)
     minutes_covered = stats["frame_count"] / frame_rate / 60.0
