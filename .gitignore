@@ -19,5 +19,8 @@ venv/
 .DS_Store
 .tmp/
 
+# Editor settings are per-developer, not project config
+.vscode/
+
 # Notebook outputs land in reports/, not in git history
 notebooks/*.html
