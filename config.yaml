@@ -1,10 +1,6 @@
 # Single source of truth for every tunable parameter.
 # Code must read values from here (via nba_assists.config) and never inline a constant.
 
-project:
-  name: nba-assists
-  season: "2015-16"
-
 paths:
   root: "."
   data: "data"
@@ -26,12 +22,6 @@ court:
     right: {x: 88.75, y: 25.0}
   rim_height_z: 10.0
   rim_radius: 0.75
-  three_point_radius: 23.75
-  corner_three_y_from_sideline: 3.0
-  restricted_area_radius: 4.0
-  paint_half_width_y: 8.0
-  free_throw_line_x_from_baseline: 19.0
-  backboard_x_from_baseline: 4.0
 
 # --- Sentinel values used by the raw feed ------------------------------------
 sentinels:
@@ -41,19 +31,12 @@ sentinels:
 # --- Tracking feed -----------------------------------------------------------
 tracking:
   source_frame_rate_hz: 25.0      # native SportVU sampling rate
-  target_frame_rate_hz: 25.0      # resample target; set lower to downsample
-  periods_per_game: 4
-  period_length_s: 720.0          # 12:00 regulation quarter
-  overtime_length_s: 300.0        # 5:00 overtime period
-  players_on_court: 10
-  max_gap_fill_frames: 3          # forward-fill at most this many dropped frames
-  max_speed_ft_per_s: 40.0        # above this a frame is treated as a glitch
-  smoothing_window_frames: 5      # centered moving average for velocity
+  players_on_court: 10            # per team; a frame also carries 1 ball row
   game_id_length: 10              # zero-padded string ids, e.g. "0021500431"
 
 # --- Play-by-play ------------------------------------------------------------
 pbp:
-  clock_tolerance_s: 1.5          # pbp clock vs tracking clock alignment slack
+  no_player_sentinel: 0           # PLAYER2_ID/PLAYER3_ID value meaning "nobody" in this feed
   event_types:
     made_shot: 1
     missed_shot: 2
@@ -68,6 +51,7 @@ pbp:
     ejection: 11
     period_begin: 12
     period_end: 13
+    replay: 18
 
 # --- Tracking inventory / QA thresholds --------------------------------------
 # Used by scripts/tracking_inventory.py to flag suspect games.
@@ -76,107 +60,22 @@ inventory:
   max_missing_frame_share: 0.02   # above this share missing a player or the ball, flag
   max_gap_running_s: 5.0          # a frame gap this long while game_clock is ticking, flag
 
-# --- Ball possession / handoff detection -------------------------------------
-possession:
-  max_dist_ft: 3.0                # player within this of the ball may possess it
-  min_hold_frames: 3              # frames of proximity before possession is held
-  release_dist_ft: 4.0            # hysteresis: possession ends beyond this
-  max_ball_height_ft: 9.0         # ball above this is a shot/lob, not a hold
-  min_gap_frames: 2               # frames between two distinct possessions
-
-# --- Pass detection ----------------------------------------------------------
-pass_detection:
-  min_duration_s: 0.12
-  max_duration_s: 3.0
-  min_travel_ft: 3.0
-  min_release_speed_ft_per_s: 8.0
-  max_apex_height_ft: 16.0        # above this it is a lob/shot attempt
-  catch_dist_ft: 2.5              # receiver proximity that closes the pass
-  dribble_reset_frames: 5          # self-pass guard (dribble, not a pass)
-
-# --- Shot and assist labeling ------------------------------------------------
-shots:
-  max_dist_from_rim_ft: 35.0
-  rim_proximity_ft: 4.0           # "at the rim" classification
-  min_release_height_ft: 5.0
-assist:
-  max_time_from_pass_to_shot_s: 2.0   # pass counts as potential assist within this
-  max_dribbles_after_catch: 1
-  pbp_match_tolerance_s: 2.0
-
-# --- Event window extraction -------------------------------------------------
-# Margins are in seconds of wall time around the anchor event.
-windows:
-  pre_margin_s: 3.0
-  post_margin_s: 1.5
-  min_length_s: 0.5
-  max_length_s: 8.0
-  stride_s: 0.5                   # for sliding-window sampling
-  pad_value: 0.0
-  drop_incomplete: true
-
-# --- Feature engineering -----------------------------------------------------
-features:
-  n_defenders_tracked: 3          # nearest defenders encoded per player
-  lane_sample_points: 11          # points sampled along a passing lane
-  lane_corridor_width_ft: 2.0
-  velocity_horizon_s: 0.4         # lookahead for projected positions
-  normalize_to_offensive_half: true
-  include_z: true
-
-# --- Model -------------------------------------------------------------------
-model:
-  type: mlp                       # one of: logistic, gbdt, mlp, lstm
-  mlp:
-    hidden_sizes: [256, 128, 64]
-    dropout: 0.2
-    activation: relu
-  lstm:
-    hidden_size: 128
-    num_layers: 2
-    bidirectional: true
-    dropout: 0.2
-  gbdt:
-    n_estimators: 400
-    max_depth: 4
-    learning_rate: 0.05
-    subsample: 0.8
+# --- Makes / assist labeling QA ----------------------------------------------
+# Used by scripts/build_makes.py to sanity-check the assist share it computes.
+makes_qa:
+  expected_assisted_share_min: 0.57
+  expected_assisted_share_max: 0.60
 
 training:
-  batch_size: 256
-  epochs: 40
-  learning_rate: 0.001
-  weight_decay: 0.0001
-  early_stopping_patience: 5
-  lr_scheduler_factor: 0.5
-  lr_scheduler_patience: 2
-  grad_clip_norm: 1.0
   device: auto                    # auto | cpu | cuda | mps
-  num_workers: 0
-  class_weighting: balanced
-
-# Splits are always by game, never by play.
-splits:
-  split_by: game
-  train_fraction: 0.70
-  val_fraction: 0.15
-  test_fraction: 0.15
-  shuffle_games: true
 
 # --- Randomness --------------------------------------------------------------
 # Every stochastic step derives its seed from here.
 seeds:
-  global: 20151600
-  split: 11
-  numpy: 12
-  torch: 13
-  sklearn: 14
+  global: 99
+  numpy: 99
+  torch: 99
 
 # --- Runtime -----------------------------------------------------------------
 runtime:
-  n_jobs: 4
-  progress_bar: true
-  log_level: INFO
   parquet_compression: zstd
-  float_dtype: float32
-  overwrite_existing: false

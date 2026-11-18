@@ -45,7 +45,7 @@ that another step would want to reuse.
 * `game_clock` is **seconds remaining in the quarter** and **counts down**.
 * "Later" in a period means a **smaller** `game_clock`.
 * Sorting a period chronologically means sorting `game_clock` **descending**.
-* A regulation period is 720 s; an overtime period is 300 s (`tracking:` config).
+* A regulation period is 720 s; an overtime period is 300 s.
 * `shot_clock` may be null (e.g. late-clock situations); handle it explicitly.
 
 ## Identifiers
@@ -61,10 +61,10 @@ that another step would want to reuse.
 ## Tracking frames
 
 * Native sampling is 25 Hz (`tracking.source_frame_rate_hz`).
-* Each frame holds 10 player rows plus 1 ball row; a frame with a different
-  count is a data defect and is counted as a failure, not silently dropped.
-* Frame gaps up to `tracking.max_gap_fill_frames` are forward-filled; longer
-  gaps break a sequence into separate segments.
+* Each frame holds 10 player rows plus 1 ball row (`tracking.players_on_court`
+  + the ball); a frame with a different count is a data defect, tracked by
+  `scripts/tracking_inventory.py` as a share of the game's frames, not
+  silently dropped.
 * **The source data is not a continuous 25 Hz stream for the whole quarter.**
   Each play-by-play event in the raw JSON carries its own short `moments`
   window; the union of those windows leaves real, multi-second — sometimes
@@ -115,12 +115,45 @@ that another step would want to reuse.
   worth a closer look), but on its own it does not separate "normal" games
   from damaged ones the way the other two rules do.
 
+## Play-by-play
+
+* Source: `Historical/PBP Data/2015-16_pbp.csv` from
+  https://github.com/sumitrodatta/nba-alt-awards (full 2015-16 season, 1,230
+  games — about twice what we have tracking for), fetched via its raw file
+  URL and saved to `data/pbp/2015-16_pbp.csv`.
+* `scripts/prepare_pbp.py` reads it, zero-pads `GAME_ID`, adds `clock_s`
+  (`PCTIMESTRING` "mm:ss" → seconds remaining in the period, same direction
+  as tracking's `game_clock`), keeps only rows for games that actually have
+  tracking frames — the distinct `game_id` values present in the tracking
+  Parquet data itself, not merely a matching file in `data/tracking/` (the
+  one zero-frame game from the QA inventory contributes no `game_id` and so
+  drops out here too) — and sorts each game by `PERIOD`, then `clock_s`
+  descending, then `EVENTNUM` (time is the primary key: `EVENTNUM` is
+  sometimes out of order in the source feed). Writes
+  `data/pbp/pbp_2015_16.parquet`, otherwise unchanged from the source
+  columns.
+* `scripts/build_makes.py` reads that Parquet — already sorted by time per
+  game — and, before any filtering, computes each row's previous event by
+  shifting within each `game_id` group (`prev_eventnum`, `prev_msgtype`,
+  `prev_clock_s`, `prev_description`, `prev_same_period`). Only after that
+  does it filter to `EVENTMSGTYPE == pbp.event_types.made_shot`, so a make's
+  "previous event" is the true previous play of any type, not the previous
+  make. `PLAYER2_ID == pbp.no_player_sentinel` (0 in this feed — unrelated to
+  our own `-1` ball sentinel) means no assist. `home_team_id` and each game's
+  roster (for the shooter-on-roster check) come from
+  `data/tracking/_rosters/*.csv`, keyed by that file's own `game_id` column —
+  roster filenames are the source archive's stem, not the game id. Writes
+  `data/derived/makes.parquet` and `reports/makes_summary.md`; the expected
+  assisted-share range it checks against lives in `makes_qa:` in
+  `config.yaml`.
+
 ## Configuration
 
-* Every tunable parameter lives in `config.yaml`: frame rates, distance and time
-  thresholds, window margins, model sizes, training hyperparameters, seeds.
-* Code reads it through `nba_assists.config.get_config()`. **No magic numbers in
-  code.** A new constant means a new config key.
+* Every tunable parameter a script actually reads lives in `config.yaml`.
+  **No magic numbers in code, and no speculative config either**: a new
+  constant means a new config key read by real code in the same change, not
+  a guess at a value some future step might want.
+* Code reads it through `nba_assists.config.get_config()`.
 * `cfg.seeds.global_` is the attribute spelling of the YAML key `seeds.global`,
   since `global` is a Python keyword.
 * Override the config path for experiments with the `NBA_ASSISTS_CONFIG`
@@ -134,28 +167,48 @@ that another step would want to reuse.
 
 ## Splits
 
-* **All train/validation/test splits are by game, never by play.** No game may
-  contribute rows to two splits; plays from one game are highly correlated.
-* Split fractions and the split seed come from `splits:` and `seeds.split`.
-* The realized split (game id → split name) is written to `data/derived/` so it
-  can be reused and audited.
+* **All train/validation/test splits will be by game, never by play.** No game
+  may contribute rows to two splits; plays from one game are highly
+  correlated. Nothing builds a split yet — no `splits:` config section exists
+  until the step that reads it does.
 
 ## Scripts
 
 Each script:
 
-1. loads the config and seeds randomness,
+1. loads the config, and seeds randomness if it uses any,
 2. writes its outputs under `data/` or `reports/`,
 3. prints a short summary of **counts and failures** on exit, e.g.
-   `games=612 frames=11,204,338 passes=84,221 failed_games=3`,
-4. is idempotent: re-running overwrites its own outputs only when
-   `runtime.overwrite_existing` is true, and otherwise skips completed work.
+   `games=612 frames=11,204,338 passes=84,221 failed_games=3`.
+
+Re-running a script currently just overwrites its outputs, except
+`scripts/build_tracking_parquet.py`, which skips a game whose Parquet already
+exists (so it can be stopped and resumed on a 636-archive run without
+redoing finished work).
+
+Check new scripts with `.venv/bin/pyright scripts/ src/` (installed via the
+`dev` extra). Two kinds of finding show up there:
+
+* A real gap — e.g. a call whose declared return type includes `None` but the
+  code doesn't check for it. Fix the code, don't suppress the warning.
+* Noise from a library's own stubs rather than a real issue — duckdb ships no
+  stubs for `Connection.description`/`fetchone()`, and pandas' stubs report a
+  union of every dtype an operation could theoretically produce and then
+  can't narrow it back down, for code that is otherwise correct and tested.
+  Prefer restructuring to dodge the false positive (a dict comprehension
+  instead of `dict(zip(...))`, say) where that's easy; otherwise scope a
+  `# pyright: reportXxx=false` comment to the top of that one file rather
+  than disabling a rule project-wide, and say why in a comment next to it.
+  Confirm the fix changed no output before moving on (diff the script's
+  Parquet/CSV against a copy from before the change).
 
 ## Data hygiene
 
 * `data/` and `models/` are git-ignored. Nothing large is committed.
-* Parquet is the interchange format, compressed with
-  `runtime.parquet_compression`; floats are stored as `runtime.float_dtype`.
+* Parquet is the interchange format, read and written through
+  `nba_assists.config.parquet_compression()` rather than passing a codec
+  string directly (pandas types that parameter as a `Literal` of five known
+  codecs, not a plain `str`).
 * Raw archives in `data/raw/` are treated as read-only.
 
 ## Environment
