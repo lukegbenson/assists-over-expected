@@ -129,11 +129,15 @@ that another step would want to reuse.
   tracking frames — the distinct `game_id` values present in the tracking
   Parquet data itself, not merely a matching file in `data/tracking/` (the
   one zero-frame game from the QA inventory contributes no `game_id` and so
-  drops out here too) — and sorts each game by `PERIOD`, then `clock_s`
-  descending, then `EVENTNUM` (time is the primary key: `EVENTNUM` is
-  sometimes out of order in the source feed). Writes
-  `data/pbp/pbp_2015_16.parquet`, otherwise unchanged from the source
-  columns.
+  drops out here too) — **and whose attack-direction consistency checks both
+  passed** (`direction_opposite_ok`/`direction_flips_ok` in
+  `reports/tracking_inventory.csv`; run `scripts/tracking_inventory.py` then
+  `scripts/attack_direction.py` first). A game failing either check means its
+  basket labeling, and so which team a play's direction belongs to, can't be
+  trusted. Rows are then sorted by `PERIOD`, then `clock_s` descending, then
+  `EVENTNUM` (time is the primary key: `EVENTNUM` is sometimes out of order
+  in the source feed). Writes `data/pbp/pbp_2015_16.parquet`, otherwise
+  unchanged from the source columns.
 * `scripts/build_makes.py` reads that Parquet — already sorted by time per
   game — and, before any filtering, computes each row's previous event by
   shifting within each `game_id` group (`prev_eventnum`, `prev_msgtype`,
@@ -148,6 +152,95 @@ that another step would want to reuse.
   `data/derived/makes.parquet` and `reports/makes_summary.md`; the expected
   assisted-share range it checks against lives in `makes_qa:` in
   `config.yaml`.
+
+## Rim-crossing detection / clock offset
+
+* `src/nba_assists/rim.py` finds, for one make, the ball's actual downward
+  crossing through a rim in the tracking frames: a pair of consecutive ball
+  frames within `rim_detection.search_before_s`/`search_after_s` of the
+  make's `clock_s`, straddling `court.rim_height_z` in height and within
+  `rim_detection.rim_radius_tol` feet of a basket at the interpolated
+  crossing point. Each candidate is checked against whether the game clock
+  was actually running shortly before it (`rim_detection.clock_check_s`/
+  `clock_min_drop_s`), with a wider `buzzer_window_s` lookback used instead
+  when the clock already reads 0 going into the crossing — this is what
+  rejects free throws and other dead-ball shots through the same rim.
+  `detect_make()` is the single entry point; see its docstring for the
+  "choosing among candidates" rules (one candidate: take it; several at the
+  same basket: take the latest; several at different baskets: take whichever
+  is closest to `clock_s` — a likely tracking glitch).
+* `scripts/detect_makes.py` runs this for every row of `makes.parquet`
+  against that game's ball frames (`rim.ball_rows()`, the inverse of the
+  per-player ball filter: `team_id`/`player_id` equal to the ball
+  sentinels). Writes `data/derived/rim_candidates.parquet` (every geometric
+  candidate, clock-check result included) and `data/derived/make_times.parquet`
+  (one row per make: `make_id = "<game_id>-<eventnum>"`, the chosen result or
+  why none was chosen), plus `reports/clock_offset_by_game.csv` and
+  `reports/clock_offset.md`.
+* **The detection rate is well under 100%** (57% on the full 2015-16 set),
+  for two different reasons, both real properties of the data rather than a
+  detection bug: the same non-continuous tracking coverage described above
+  (a make's rim crossing can simply fall in a stretch with zero frames), and
+  — confirmed by hand on several of the worst-detection games — a handful of
+  games carry a clock-offset between the pbp and tracking feeds larger than
+  the fixed ±2 s search window, so every make in that game searches the
+  wrong slice of frames and detects nothing. `clock_offset_by_game.csv` has
+  the full per-game breakdown; a widened or per-game-calibrated search
+  window is a candidate follow-up, not yet implemented.
+* **The offsets found are not simple truncation or rounding.** The spec
+  question was whether `clock_s` is a truncated or rounded reading of the
+  true time; in practice detected offsets center around -1.2s (the
+  recorded pbp time trailing the actual rim crossing by over a second, not a
+  sub-second rounding artifact), consistent with known lag in the NBA's
+  play-by-play event logging relative to real game time. See
+  `reports/clock_offset.md` for the full distribution.
+
+## Attack direction
+
+* `src/nba_assists/direction.py` determines, per game/period/team, which
+  basket a team is attacking, from tracking data alone (no play-by-play): a
+  ball-holder vote. On frames sampled at `attack_direction.sample_hz`, kept
+  only when the game clock is running (native-frame-to-native-frame, before
+  sampling), `shot_clock` is in `[shot_clock_min, shot_clock_max]`, the frame
+  has exactly one ball row and `tracking.players_on_court` player rows, and
+  the ball and every player are in the same half (`court.length_x / 2`), the
+  player nearest the ball (within `hold_dist` feet, ball height at or below
+  `hold_height`) casts one vote for the basket in that half. `votes()` is the
+  per-game entry point; `tally_votes()` picks each (period, team_id)'s
+  winning basket and `vote_share`; `secondary_agreement()` reports, per
+  period, how often the player farthest from that basket (a secondary,
+  report-only check) belongs to the same team as the vote; `consistency_checks()`
+  flags a game where the two teams don't hold opposite baskets in every
+  period, or a team's basket doesn't follow the expected periods-1-2/3-4
+  flip-and-overtime-matches-period-4 pattern.
+* `scripts/attack_direction.py` runs this for every game in `data/tracking/`.
+  Writes `data/derived/attack_direction.parquet` (one row per game/period/team:
+  `game_id`, `period`, `team_id`, `team_abbr`, `basket_x`, `n_votes`,
+  `vote_share`, `secondary_agreement`, `clear` — `clear` is
+  `vote_share >= attack_direction.min_share` and `n_votes` at or above
+  `attack_direction.min_votes` (`min_votes_ot` instead for a period past 4,
+  since overtime is shorter); appends `direction_min_share`,
+  `direction_unclear_periods`, `direction_opposite_ok`, `direction_flips_ok`
+  to `reports/tracking_inventory.csv` (run `scripts/tracking_inventory.py`
+  first); and writes `reports/attack_direction.md`.
+* **`attack_direction.parquet` always has one row per (period, team_id)
+  actually played in a game**, even a team-period that cast zero votes
+  (`n_votes=0`, `basket_x` null, `clear=False`) — a later step (alignment)
+  needs every combination to look up, not just the ones with enough votes to
+  clear the thresholds. `scripts/attack_direction.py`'s `process_game()`
+  reindexes `tally_votes()`'s output onto the full period × team_id grid
+  (periods from the tracking data itself, teams from the roster) before
+  running `consistency_checks()`, so a period where one or both teams cast no
+  vote is itself a flagged violation (`direction_opposite_ok=False`), not
+  silently absent the way it was before this reindex existed.
+* **Some games have `shot_clock` null for part or all of a game** (a
+  source-data defect, confirmed by hand — frame counts and coverage are
+  otherwise normal): 12 games have it null throughout (every period of those
+  games casts zero votes), and a handful more have it null for just one or
+  two periods. Either way the shot-clock-range filter correctly excludes a
+  null reading rather than guessing, and the resulting zero-vote periods show
+  up as consistency violations in `attack_direction.md` and so are excluded
+  by `scripts/prepare_pbp.py` (see "Play-by-play" above).
 
 ## Configuration
 

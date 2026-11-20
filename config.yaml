@@ -66,6 +66,30 @@ makes_qa:
   expected_assisted_share_min: 0.57
   expected_assisted_share_max: 0.60
 
+# --- Rim-crossing detection ---------------------------------------------------
+# Used by scripts/detect_makes.py to recover each make's true time from ball
+# tracking, to measure play-by-play clock offset.
+rim_detection:
+  search_before_s: 4.0       # how far before clock_s to search, in game-clock seconds
+  search_after_s: 2.0        # how far after clock_s to search, in game-clock seconds
+  rim_radius_tol: 1.0        # max horizontal distance (ft) from a rim center to count as a crossing
+  clock_check_s: 0.2         # lookback span for the clock-running check
+  clock_min_drop_s: 0.1      # minimum game_clock drop required over clock_check_s
+  buzzer_window_s: 3.0       # wider lookback used only when the clock reads 0 at the crossing
+
+# --- Attack-direction detection ------------------------------------------------
+# Used by scripts/attack_direction.py to determine, per game/period/team,
+# which basket a team is attacking, from tracking data alone (no play-by-play).
+attack_direction:
+  sample_hz: 5.0            # frames per second voted on (every source_frame_rate_hz/sample_hz-th frame)
+  shot_clock_min: 5.0       # seconds; exclude frames with shot_clock below this
+  shot_clock_max: 18.0      # seconds; exclude frames with shot_clock above this
+  hold_dist: 3.0            # ft; max horizontal distance from the ball to its nearest player to count as "holding" it
+  hold_height: 9.0          # ft; max ball height to count as held, not mid-pass/shot
+  min_share: 0.80           # vote_share below this makes a team-period's basket "unclear"
+  min_votes: 200            # n_votes below this also makes a team-period's basket "unclear"
+  min_votes_ot: 100         # lower n_votes bar for overtime periods (period > 4), which are shorter
+
 training:
   device: auto                    # auto | cpu | cuda | mps
 

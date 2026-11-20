@@ -17,6 +17,11 @@ Transformations, applied to every original NBA stats column unchanged except:
     data, not just a matching filename. One game currently has a tracking
     Parquet with zero rows (see PROJECT.md, Tracking QA inventory) and so
     contributes no game_id; it is therefore dropped here too.
+  * rows are also kept only for games whose attack-direction consistency
+    checks both passed (direction_opposite_ok and direction_flips_ok in
+    reports/tracking_inventory.csv, appended by scripts/attack_direction.py
+    -- run that first). A game failing either means its basket labeling, and
+    so which team a play's direction belongs to, can't be trusted.
   * rows are sorted by game_id, then PERIOD, then clock_s descending, then
     EVENTNUM — time is the primary key because EVENTNUM is sometimes out of
     order in the source feed.
@@ -57,6 +62,22 @@ def tracked_game_ids(tracking_dir: Path) -> set[str]:
     return {r[0] for r in rows}
 
 
+def direction_consistent_game_ids(reports_dir: Path) -> set[str]:
+    """game_id values whose attack-direction consistency checks both passed.
+
+    Reads direction_opposite_ok/direction_flips_ok from
+    reports/tracking_inventory.csv (appended by scripts/attack_direction.py)
+    -- a game failing either is excluded, since its basket labeling, and so
+    which team a given play's direction belongs to, can't be trusted.
+    """
+    inventory_path = reports_dir / "tracking_inventory.csv"
+    inventory = pd.read_csv(inventory_path, dtype={"game_id": str})
+    ok = (inventory["direction_opposite_ok"] == True) & (  # noqa: E712
+        inventory["direction_flips_ok"] == True  # noqa: E712
+    )
+    return set(inventory.loc[ok, "game_id"])
+
+
 def parse_clock_s(pctimestring: pd.Series) -> pd.Series:
     """'mm:ss' -> seconds remaining in the period. Unparseable -> NaN."""
     parts = pctimestring.str.extract(r"^(\d+):(\d{2})$")
@@ -69,6 +90,7 @@ def main() -> int:
     cfg = get_config()
     pbp_dir = cfg.get_path("pbp")
     tracking_dir = cfg.get_path("tracking")
+    reports_dir = cfg.get_path("reports")
     game_id_width = int(cfg.tracking.game_id_length)
 
     src_path = pbp_dir / SOURCE_FILENAME
@@ -81,6 +103,12 @@ def main() -> int:
             '"https://raw.githubusercontent.com/sumitrodatta/nba-alt-awards/'
             'main/Historical/PBP%20Data/2015-16_pbp.csv"'
         )
+        return 1
+
+    inventory_path = reports_dir / "tracking_inventory.csv"
+    if not inventory_path.is_file() or "direction_opposite_ok" not in pd.read_csv(inventory_path, nrows=0).columns:
+        print(f"missing direction_opposite_ok/direction_flips_ok in {inventory_path}")
+        print("run scripts/tracking_inventory.py then scripts/attack_direction.py first")
         return 1
 
     df = pd.read_csv(src_path, index_col=0, dtype={"GAME_ID": str})
@@ -96,11 +124,15 @@ def main() -> int:
     for col in NULLABLE_INT_COLUMNS:
         df[col] = df[col].astype("Int64")
 
-    keep_ids = tracked_game_ids(tracking_dir)
+    tracked_ids = tracked_game_ids(tracking_dir)
+    direction_ok_ids = direction_consistent_game_ids(reports_dir)
+    keep_ids = tracked_ids & direction_ok_ids
+
     pbp_game_ids = set(df["GAME_ID"].unique())
     n_games_in_pbp = len(pbp_game_ids)
     n_games_kept = len(pbp_game_ids & keep_ids)
-    n_games_untracked = n_games_in_pbp - n_games_kept
+    n_games_untracked = len(pbp_game_ids - tracked_ids)
+    n_games_direction_inconsistent = len(pbp_game_ids & tracked_ids - direction_ok_ids)
 
     df = df[df["GAME_ID"].isin(keep_ids)].copy()
 
@@ -118,6 +150,7 @@ def main() -> int:
         f"summary: rows_read={n_read:,} rows_kept={len(df):,} "
         f"games_in_source={n_games_in_pbp} games_kept={n_games_kept} "
         f"games_not_in_tracking={n_games_untracked} "
+        f"games_direction_inconsistent={n_games_direction_inconsistent} "
         f"bad_game_id={n_bad_game_id} unparseable_clock={n_bad_clock}"
     )
     return 1 if (n_bad_game_id or n_bad_clock) else 0
