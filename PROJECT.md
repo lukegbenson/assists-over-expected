@@ -265,6 +265,48 @@ that another step would want to reuse.
   up as consistency violations in `attack_direction.md` and so are excluded
   by `scripts/prepare_pbp.py` (see "Play-by-play" above).
 
+## Windows
+
+* `src/nba_assists/windows.py` cuts a fixed-end tracking window leading up
+  to each make, for model input: `resolve_window_start()` picks the window's
+  start (anchored on the corrected previous play-by-play event, or on the
+  previous make's own detected crossing when it has one, or on the
+  period's start when there's no usable previous event in the same
+  period), `build_window()` resolves that against one quarter's frame
+  table into actual kept, clock-running frames (dropping dead-ball frames,
+  truncating to `windows.max_window_s`, and flagging a genuine live-play
+  tracking gap vs. the harmless jump a dead-ball stretch leaves once its
+  frozen frames are dropped), `rotate_and_normalize()` puts every play
+  attacking the same (left) basket, and `build_agent_tracks()` extracts a
+  track per player_id present in the kept frames plus the ball, masked
+  where absent.
+* `scripts/build_windows.py` runs this for every row of `makes.parquet`.
+  A make is only included when detected, its crossing basket matches the
+  scoring team's attacking basket for that period (`attack_direction.parquet`,
+  checked independently of `detect_makes.py`'s own basket restriction),
+  that team-period's direction vote was `clear`, and the resulting window
+  clears `windows.min_window_s` with no coverage gap — every other make
+  still gets an `index.parquet` row with `included=False` and why. Writes
+  `data/windows/<game_id>.npz` per game with at least one included make
+  (`pos`/`mask`/`roles`/`length`/`make_id`, plus `shot_clock` if
+  `windows.include_shot_clock`; `A` and `T` are padded to that game's own
+  max, not a global one) and `data/windows/index.parquet`, plus
+  `reports/windows.md`.
+* **Never store player IDs, team IDs, home/away, or arena in the npz
+  arrays** — only position, presence, and the three role flags
+  (`is_ball`/`is_offense`/`is_shooter`). `index.parquet` keeps `game_id`/
+  `eventnum` for joining back to `makes.parquet`, which is bookkeeping
+  metadata, not a model input.
+* **The assisted share is consistently higher among included makes than
+  excluded ones, for every team** (overall +5.9 percentage points on the
+  first run, every one of the 30 teams positive, ranging +0.5 to +11.7
+  points) — consistent with "Rim-crossing detection" above: detection
+  fails disproportionately on low-arc, close-range shots (tip-ins,
+  finger rolls, putbacks), which are disproportionately unassisted. A
+  model trained only on included windows is trained on a sample skewed
+  toward assisted shots; this isn't a bug to fix here, but it's a real
+  selection effect worth accounting for downstream.
+
 ## Configuration
 
 * Every tunable parameter a script actually reads lives in `config.yaml`.

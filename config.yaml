@@ -90,6 +90,19 @@ attack_direction:
   min_votes: 200            # n_votes below this also makes a team-period's basket "unclear"
   min_votes_ot: 100         # lower n_votes bar for overtime periods (period > 4), which are shorter
 
+# --- Window extraction ----------------------------------------------------------
+# Used by scripts/build_windows.py to cut a fixed-end tracking window leading up
+# to each detected make, for model input.
+windows:
+  end_buffer_s: 0.2          # seconds of real time kept after the rim crossing
+  start_margin_s: 0.2        # seconds subtracted from the corrected previous-event time (errs later)
+  after_prev_make_s: 0.3     # seconds after the previous make's own crossing, when used as the start anchor
+  offset_source: make        # make | game_median -- which offset_s corrects the previous event's clock_s
+  offset_nudge_s: 0.5        # added to offset_s (toward 0) before using it to correct a previous time
+  max_window_s: 24.0         # keep at most this many trailing seconds of a window
+  min_window_s: 0.4          # below this many seconds, exclude the make as "too short"
+  include_shot_clock: true   # whether to store a per-frame shot_clock array
+
 training:
   device: auto                    # auto | cpu | cuda | mps
 

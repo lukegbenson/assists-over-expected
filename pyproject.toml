@@ -30,7 +30,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "scripts"]
+pythonpath = ["src", "scripts", "scripts/vendor"]
 
 [tool.pyright]
-extraPaths = ["src", "scripts"]
+extraPaths = ["src", "scripts", "scripts/vendor"]
