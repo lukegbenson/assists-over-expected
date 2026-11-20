@@ -70,9 +70,9 @@ makes_qa:
 # Used by scripts/detect_makes.py to recover each make's true time from ball
 # tracking, to measure play-by-play clock offset.
 rim_detection:
-  search_before_s: 4.0       # how far before clock_s to search, in game-clock seconds
+  search_before_s: 5.5       # how far before clock_s to search, in game-clock seconds
   search_after_s: 2.0        # how far after clock_s to search, in game-clock seconds
-  rim_radius_tol: 1.0        # max horizontal distance (ft) from a rim center to count as a crossing
+  rim_radius_tol: 1.25       # max horizontal distance (ft) from a rim center to count as a crossing
   clock_check_s: 0.2         # lookback span for the clock-running check
   clock_min_drop_s: 0.1      # minimum game_clock drop required over clock_check_s
   buzzer_window_s: 3.0       # wider lookback used only when the clock reads 0 at the crossing

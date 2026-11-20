@@ -158,7 +158,10 @@ that another step would want to reuse.
 * `src/nba_assists/rim.py` finds, for one make, the ball's actual downward
   crossing through a rim in the tracking frames: a pair of consecutive ball
   frames within `rim_detection.search_before_s`/`search_after_s` of the
-  make's `clock_s`, straddling `court.rim_height_z` in height and within
+  make's `clock_s` (currently -5.5 s/+2 s — the sign convention is
+  `offset_s = clock_s - cross_game_clock`, so `search_before_s` bounds how
+  negative an offset can be found and `search_after_s` how positive),
+  straddling `court.rim_height_z` in height and within
   `rim_detection.rim_radius_tol` feet of a basket at the interpolated
   crossing point. Each candidate is checked against whether the game clock
   was actually running shortly before it (`rim_detection.clock_check_s`/
@@ -169,31 +172,51 @@ that another step would want to reuse.
   "choosing among candidates" rules (one candidate: take it; several at the
   same basket: take the latest; several at different baskets: take whichever
   is closest to `clock_s` — a likely tracking glitch).
+* **The geometric search is restricted to the basket the scoring team was
+  actually attacking**, via `detect_make()`'s optional `basket_x` argument:
+  `scripts/detect_makes.py` looks up `data/derived/attack_direction.parquet`
+  (`game_id`, `period`, `shooter_team_id`) before calling it, so a crossing
+  at the wrong end of the court is never a candidate at all — not just
+  outranked by a closer one. The old dual-basket search (`basket_x=None`,
+  still the default — both baskets checked, `multi_diff` picks whichever
+  candidate is closest to `clock_s`) now only runs as a fallback for the
+  handful of makes whose period has no tracking frames at all (so
+  `attack_direction.py` never produced a row for it either) — see "Attack
+  direction" below.
+* `window_has_gap()` checks whether the same search window had a tracking
+  gap, using `inventory.max_gap_running_s` (the same threshold
+  `scripts/tracking_inventory.py` flags games with) against the ball frames
+  actually searched, while the clock was running. `scripts/detect_makes.py`
+  records it per make (`window_gap` in `make_times.parquet`) and crosses it
+  against `detected` in `clock_offset.md`'s "Detection vs. tracking
+  coverage" table: covered+detected is the common case; covered+not-detected
+  is a real detector miss (the data was fine; something else went wrong);
+  gap+detected means treat the match with some suspicion (found something,
+  but through a window with missing data); gap+not-detected is the expected,
+  explainable failure mode.
 * `scripts/detect_makes.py` runs this for every row of `makes.parquet`
   against that game's ball frames (`rim.ball_rows()`, the inverse of the
   per-player ball filter: `team_id`/`player_id` equal to the ball
   sentinels). Writes `data/derived/rim_candidates.parquet` (every geometric
   candidate, clock-check result included) and `data/derived/make_times.parquet`
-  (one row per make: `make_id = "<game_id>-<eventnum>"`, the chosen result or
-  why none was chosen), plus `reports/clock_offset_by_game.csv` and
-  `reports/clock_offset.md`.
-* **The detection rate is well under 100%** (57% on the full 2015-16 set),
-  for two different reasons, both real properties of the data rather than a
-  detection bug: the same non-continuous tracking coverage described above
-  (a make's rim crossing can simply fall in a stretch with zero frames), and
-  — confirmed by hand on several of the worst-detection games — a handful of
-  games carry a clock-offset between the pbp and tracking feeds larger than
-  the fixed ±2 s search window, so every make in that game searches the
-  wrong slice of frames and detects nothing. `clock_offset_by_game.csv` has
-  the full per-game breakdown; a widened or per-game-calibrated search
-  window is a candidate follow-up, not yet implemented.
-* **The offsets found are not simple truncation or rounding.** The spec
+  (one row per make: `make_id = "<game_id>-<eventnum>"`, the chosen result,
+  `window_gap`, or why none was chosen), plus `reports/clock_offset_by_game.csv`
+  and `reports/clock_offset.md`.
+* **The detection rate is well under 100%** (87% on the full set, after the
+  basket restriction and the -5.5 s/+2 s window), mostly for one real property
+  of the data rather than a detection bug: the same non-continuous tracking
+  coverage described above (a make's rim crossing can simply fall in a
+  stretch with zero frames) — see the coverage table above for exactly how
+  much of the miss rate that explains. `clock_offset_by_game.csv` has the
+  full per-game breakdown.
+* **The offsets found are not simple truncation or rounding.** The original
   question was whether `clock_s` is a truncated or rounded reading of the
-  true time; in practice detected offsets center around -1.2s (the
+  true time; in practice detected offsets center noticeably negative (the
   recorded pbp time trailing the actual rim crossing by over a second, not a
   sub-second rounding artifact), consistent with known lag in the NBA's
-  play-by-play event logging relative to real game time. See
-  `reports/clock_offset.md` for the full distribution.
+  play-by-play event logging relative to real game time, with a real
+  per-game/per-arena component on top (see `clock_offset_by_arena.csv`). See
+  `reports/clock_offset.md` for the full, current distribution.
 
 ## Attack direction
 
