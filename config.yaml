@@ -104,6 +104,18 @@ windows:
   min_start_coverage_fraction: 0.8  # ...or at least this share of the originally intended (game-clock) length
   include_shot_clock: true   # whether to store a per-frame shot_clock array
 
+# --- Pass attribution ---------------------------------------------------------
+# Used by scripts/attribute_passers.py to trace, from tracking alone, who last
+# held the ball before the shooter inside each Step-4 (windows) make.
+passer:
+  hold_dist_grid: [1.5, 2.0, 2.5, 3.0, 4.0]       # ft; max ball-to-nearest-offensive-player distance to count as held
+  hold_height_grid: [6.0, 7.5, 8.5, 9.0, 10.0]    # ft; max ball height to count as held, not mid-pass/shot
+  min_run_s_grid: [0.08, 0.12, 0.2, 0.28, 0.4]    # drop possession runs shorter than this
+  dribble_gap_s_grid: [0.2, 0.3, 0.5, 0.6, 0.8]   # bridge gaps up to this long, same player, inside a run (dribble bounces)
+  train_game_share: 0.7     # share of games (seeded by seeds.numpy) used to tune the grid search; the rest are held out
+  max_tuning_makes: 2000    # cap on training assisted makes evaluated per grid combination, for runtime
+  n_examples: 20            # disagreement examples sampled into reports/passer_trace.md
+
 training:
   device: auto                    # auto | cpu | cuda | mps
 

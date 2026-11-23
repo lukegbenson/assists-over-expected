@@ -306,6 +306,53 @@ that another step would want to reuse.
   toward assisted shots; this isn't a bug to fix here, but it's a real
   selection effect worth accounting for downstream.
 
+## Pass attribution
+
+* `src/nba_assists/passer.py` traces who last held the ball before the
+  shooter, from tracking proximity alone, over one included make's real
+  per-player frames (its window's own `start_ts_ms` through the make's
+  detected rim crossing) -- not the anonymized `pos`/`mask`/`roles` tensors
+  in the windows npz, which discard player identity on purpose (see
+  "Windows" above). Four steps: `possession_geometry()` (the nearest
+  offensive player to the ball each frame and its distance, and the ball's
+  height -- independent of any threshold, so it's computed once per make
+  and reused across a hold_dist/hold_height grid search); `classify_held()`
+  (a frame is "held" within `hold_dist` and at or below `hold_height`, else
+  free); `possession_runs()` (consecutive held-by-the-same-player
+  stretches, bridging gaps up to `dribble_gap_s` so a dribble's bounces
+  don't split one possession, dropped below `min_run_s`); `backward_trace()`
+  (anchors on the *recorded* shooter, not whatever the last run's own
+  player_id happens to be -- when the last run really is the shooter's,
+  step back one run: a different offensive player there is the passer,
+  nothing there or the shooter's own run reaching the window's start means
+  "NONE"/`None`; when it *isn't* the shooter's -- the shooter's catch never
+  registered as a run at all, e.g. caught above `hold_height` on an
+  alley-oop -- that last run is, by elimination, the most recent passer,
+  and `trace_problem` flags the mismatch for review). `attribute_passer()`
+  then uses the known assister when the play was assisted, otherwise the
+  traced passer.
+* **No "defender nearest the ball" check.** An earlier version also forced
+  NONE when a defender came within `hold_dist` of the ball between two
+  runs, meant to catch a contested/broken possession. In practice it also
+  fired on a defender simply being near a pass's flight path that still
+  arrived cleanly (a normal, common event, not a deflection) -- removed in
+  favor of the three checks above.
+* `scripts/attribute_passers.py` runs this for every included make, tuning
+  `hold_dist`/`hold_height`/`min_run_s`/`dribble_gap_s` by grid search
+  (`passer.*_grid` in `config.yaml`) to maximize agreement between the
+  traced passer and the known assister, on a seeded sample of assisted
+  makes from a seeded game-level train split (`passer.train_game_share`;
+  see "Splits" below) -- ties broken toward the lower false-NONE rate, since
+  a missed pass biases results more than an invented one. Reports agreement
+  and the false-NONE rate on the *held-out* games. Writes
+  `data/derived/passers.parquet` (`traced_passer_id` for every included
+  make, assisted or not, plus the final `passer_id`) and
+  `reports/passer_trace.md`.
+* `notebooks/sample_passers.ipynb` browses `passers.parquet` and animates a
+  chosen play (reusing `scripts/animate_window.py`, extended to ring the
+  scorer's and passer's circles and note their names above the court) to
+  check a trace by eye.
+
 ## Configuration
 
 * Every tunable parameter a script actually reads lives in `config.yaml`.
@@ -328,8 +375,11 @@ that another step would want to reuse.
 
 * **All train/validation/test splits will be by game, never by play.** No game
   may contribute rows to two splits; plays from one game are highly
-  correlated. Nothing builds a split yet — no `splits:` config section exists
-  until the step that reads it does.
+  correlated. No shared `splits:` config section or persisted split file
+  exists yet; `scripts/attribute_passers.py` is the first consumer, and it
+  builds its own seeded game-level train/holdout split in-script
+  (`passer.train_game_share`), scoped to tuning that one script's
+  hyperparameters rather than anything a model trains on.
 
 ## Scripts
 

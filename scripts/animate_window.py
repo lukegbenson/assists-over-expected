@@ -63,6 +63,9 @@ BALL_COLOR = "#ff8c00"
 MUTED_COLOR = "#888888"
 PBP_COLOR = "#c0392b"
 DETECTED_COLOR = "#1e8449"
+SCORER_RING_COLOR = "#f1c40f"
+PASSER_RING_COLOR = "#2980b9"
+RING_WIDTH = 2.0
 
 
 def game_id_to_path(tracking_dir: Path) -> dict[str, Path]:
@@ -102,6 +105,14 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
         )
     idx = idx_rows.iloc[0]
 
+    passer = None
+    passers_path = derived_dir / "passers.parquet"
+    if passers_path.exists():
+        passers = pd.read_parquet(passers_path)
+        passer_rows = passers[(passers["game_id"] == game_id) & (passers["eventnum"] == eventnum)]
+        if len(passer_rows):
+            passer = passer_rows.iloc[0]
+
     return {
         "period": int(make["period"]),
         "clock_s": float(make["clock_s"]),
@@ -113,6 +124,10 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
         else None,
         "start_ts_ms": float(idx["start_ts_ms"]),
         "end_ts_ms": float(idx["end_ts_ms"]),
+        "shooter_id": int(make["shooter_id"]),
+        "passer_id": int(passer["passer_id"]) if passer is not None and pd.notna(passer["passer_id"]) else None,
+        "passer_is_assist": bool(passer["assisted"]) if passer is not None else False,
+        "passer_available": passer is not None,
     }
 
 
@@ -205,9 +220,37 @@ def build_event_animation(
         detected_text, xy=(0.0, 1.02), xycoords="axes fraction", color=MUTED_COLOR, fontsize=8, horizontalalignment="left"
     )
 
+    def _label(pid: int | None) -> str:
+        if pid is None:
+            return "?"
+        name, jersey = name_jersey.get(pid, ("?", "?"))
+        return f"{name} #{jersey}"
+
+    scorer_text = f"scorer: {_label(info['shooter_id'])}"
+    if not info["passer_available"]:
+        passer_text = "passer: not available (run scripts/attribute_passers.py)"
+    elif info["passer_id"] is None:
+        passer_text = "passer: none identified"
+    else:
+        passer_text = f"passer: {_label(info['passer_id'])}" + (" (assisted)" if info["passer_is_assist"] else " (traced)")
+    ax.annotate(
+        scorer_text, xy=(1.0, 1.08), xycoords="axes fraction", color=SCORER_RING_COLOR, fontsize=8,
+        horizontalalignment="right", fontweight="bold",
+    )
+    ax.annotate(
+        passer_text, xy=(1.0, 1.02), xycoords="axes fraction", color=PASSER_RING_COLOR, fontsize=8,
+        horizontalalignment="right", fontweight="bold",
+    )
+
     player_circles = {
         pid: Circle((0, 0), PLAYER_CIRCLE_SIZE, color=Team(int(team_by_player[pid])).color) for pid in player_ids
     }
+    if info["shooter_id"] in player_circles:
+        player_circles[info["shooter_id"]].set_edgecolor(SCORER_RING_COLOR)
+        player_circles[info["shooter_id"]].set_linewidth(RING_WIDTH)
+    if info["passer_id"] is not None and info["passer_id"] in player_circles:
+        player_circles[info["passer_id"]].set_edgecolor(PASSER_RING_COLOR)
+        player_circles[info["passer_id"]].set_linewidth(RING_WIDTH)
     player_annotations = {
         pid: ax.annotate(
             name_jersey.get(pid, ("?", "?"))[1],
