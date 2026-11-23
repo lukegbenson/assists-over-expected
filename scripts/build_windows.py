@@ -139,7 +139,6 @@ def main() -> int:
     end_buffer_s = float(w.end_buffer_s)
     start_margin_s = float(w.start_margin_s)
     after_prev_make_s = float(w.after_prev_make_s)
-    offset_source = str(w.offset_source)
     offset_nudge_s = float(w.offset_nudge_s)
     max_window_s = float(w.max_window_s)
     min_window_s = float(w.min_window_s)
@@ -174,12 +173,6 @@ def main() -> int:
     team_abbr_lookup = {
         (r.game_id, int(r.team_id)): r.team_abbr for r in direction.itertuples(index=False)
     }
-
-    game_median_offset: dict[str, float] = {}
-    if offset_source == "game_median":
-        by_game_csv = pd.read_csv(reports_dir / "clock_offset_by_game.csv", dtype={"game_id": str})
-        by_game_csv["median_offset_s"] = pd.to_numeric(by_game_csv["median_offset_s"], errors="coerce")
-        game_median_offset = dict(zip(by_game_csv["game_id"], by_game_csv["median_offset_s"]))
 
     merged = makes.merge(make_times, on=["game_id", "eventnum"], how="left")
     merged["detected"] = merged["detected"].fillna(False)
@@ -258,10 +251,8 @@ def main() -> int:
 
             prev_eventnum = make["prev_eventnum"]
             prev_make = mt_lookup.get((make["game_id"], int(prev_eventnum))) if pd.notna(prev_eventnum) else None
-            offset_for_prev = (
-                game_median_offset.get(make["game_id"]) if offset_source == "game_median" else float(make["offset_s"])
-            )
-            if offset_for_prev is None or pd.isna(offset_for_prev):
+            offset_for_prev = float(make["offset_s"])
+            if pd.isna(offset_for_prev):
                 offset_for_prev = 0.0
 
             start_info = resolve_window_start(

@@ -20,11 +20,6 @@ Writes:
   * data/derived/make_times.parquet -- one row per make: the chosen result
     (or why none was chosen), plus window_gap (whether the search window had
     a tracking gap while the clock was running). make_id = "<game_id>-<eventnum>".
-  * reports/clock_offset_by_game.csv -- detection rate and median offset per
-    game, with its home team (the arena proxy: one home arena per team in
-    this dataset).
-  * reports/clock_offset_by_arena.csv -- each home team's game count and the
-    mean of its games' median offsets.
   * reports/clock_offset.md -- the high-level report: detection rate, counts
     by case, offset statistics, the by-arena breakdown, detection vs.
     tracking coverage, and random samples for manual review.
@@ -139,9 +134,7 @@ def _ascii_histogram(values: pd.Series) -> list[str]:
     return lines
 
 
-def write_by_game_csv(
-    results: pd.DataFrame, game_home_team: dict[str, str | None], report_path: Path
-) -> pd.DataFrame:
+def compute_by_game(results: pd.DataFrame, game_home_team: dict[str, str | None]) -> pd.DataFrame:
     by_game = results.groupby("game_id").agg(
         n_makes=("make_id", "size"),
         n_detected=("detected", "sum"),
@@ -152,25 +145,10 @@ def write_by_game_csv(
         "detection_rate", kind="mergesort"
     ).reset_index(drop=True)
     by_game["home_team"] = by_game["game_id"].map(game_home_team)
-    with report_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["game_id", "home_team", "n_makes", "n_detected", "detection_rate", "median_offset_s"])
-        for _, row in by_game.iterrows():
-            median_offset_s = row["median_offset_s"]
-            writer.writerow(
-                [
-                    row["game_id"],
-                    row["home_team"] or "",
-                    row["n_makes"],
-                    row["n_detected"],
-                    round(row["detection_rate"], 4),
-                    round(median_offset_s, 4) if pd.notna(median_offset_s) else "",
-                ]
-            )
     return by_game
 
 
-def write_by_arena_csv(by_game: pd.DataFrame, report_path: Path) -> pd.DataFrame:
+def compute_by_arena(by_game: pd.DataFrame) -> pd.DataFrame:
     """Each home team's game count and the mean of its games' median offsets."""
     valid = by_game.dropna(subset=["home_team", "median_offset_s"])
     by_arena = (
@@ -180,11 +158,6 @@ def write_by_arena_csv(by_game: pd.DataFrame, report_path: Path) -> pd.DataFrame
         .sort_values("mean_median_offset_s", kind="mergesort")
         .reset_index(drop=True)
     )
-    with report_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["home_team", "n_games", "mean_median_offset_s"])
-        for _, row in by_arena.iterrows():
-            writer.writerow([row["home_team"], row["n_games"], round(row["mean_median_offset_s"], 4)])
     return by_arena
 
 
@@ -216,9 +189,7 @@ def write_report(
     results: pd.DataFrame,
     candidates: pd.DataFrame,
     by_game: pd.DataFrame,
-    by_game_csv_path: Path,
     by_arena: pd.DataFrame,
-    by_arena_csv_path: Path,
     report_path: Path,
 ) -> None:
     n_makes = len(results)
@@ -234,8 +205,7 @@ def write_report(
         f"- **Makes:** {n_makes:,}",
         f"- **Detected:** {n_detected:,} ({detection_rate:.2%})",
         f"- **Candidates rejected by the clock-running check:** {n_rejected_total:,}",
-        f"- **Per-game detection rate:** see `{by_game_csv_path.name}`"
-        f" (worst games listed below)",
+        "- **Per-game detection rate:** worst games listed below",
         "",
         "## Makes by case",
         "",
@@ -329,15 +299,14 @@ def write_report(
         "",
         "## Mean median offset by arena (home team)",
         "",
-        f"Per game: median `offset_s` over its detected makes (`{by_game_csv_path.name}`)."
-        f" Per arena: mean of its games' medians, unweighted by make count.",
+        "Per game: median `offset_s` over its detected makes."
+        " Per arena: mean of its games' medians, unweighted by make count.",
         "",
         "| home team | games | mean median offset_s |",
         "|---|---|---|",
     ]
     for _, row in by_arena.iterrows():
         lines.append(f"| {row['home_team']} | {row['n_games']} | {row['mean_median_offset_s']:.3f} |")
-    lines.append(f"\nFull detail: `{by_arena_csv_path.name}`.")
 
     lines += ["", "## Random make_ids for manual review, by case", ""]
     for case in CASES:
@@ -423,22 +392,16 @@ def main() -> int:
     candidates_out.to_parquet(candidates_path, compression=parquet_compression(cfg), index=False)
     results_out.to_parquet(make_times_path, compression=parquet_compression(cfg), index=False)
 
-    by_game_csv_path = reports_dir / "clock_offset_by_game.csv"
-    by_game = write_by_game_csv(results_out, game_home_team, by_game_csv_path)
-
-    by_arena_csv_path = reports_dir / "clock_offset_by_arena.csv"
-    by_arena = write_by_arena_csv(by_game, by_arena_csv_path)
+    by_game = compute_by_game(results_out, game_home_team)
+    by_arena = compute_by_arena(by_game)
 
     report_path = reports_dir / "clock_offset.md"
-    write_report(
-        results_out, candidates_out, by_game, by_game_csv_path, by_arena, by_arena_csv_path, report_path
-    )
+    write_report(results_out, candidates_out, by_game, by_arena, report_path)
 
     n_detected = int(results_out["detected"].sum())
     detection_rate = n_detected / len(results_out) if len(results_out) else float("nan")
     print(f"wrote {candidates_path} ({len(candidates_out):,} rows)")
     print(f"wrote {make_times_path} ({len(results_out):,} rows)")
-    print(f"wrote {by_game_csv_path}")
     print(f"wrote {report_path}")
     print(
         f"summary: makes={len(results_out):,} detected={n_detected:,} "

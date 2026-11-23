@@ -200,14 +200,13 @@ that another step would want to reuse.
   sentinels). Writes `data/derived/rim_candidates.parquet` (every geometric
   candidate, clock-check result included) and `data/derived/make_times.parquet`
   (one row per make: `make_id = "<game_id>-<eventnum>"`, the chosen result,
-  `window_gap`, or why none was chosen), plus `reports/clock_offset_by_game.csv`
-  and `reports/clock_offset.md`.
+  `window_gap`, or why none was chosen), plus `reports/clock_offset.md`.
 * **The detection rate is well under 100%** (87% on the full set, after the
   basket restriction and the -5.5 s/+2 s window), mostly for one real property
   of the data rather than a detection bug: the same non-continuous tracking
   coverage described above (a make's rim crossing can simply fall in a
   stretch with zero frames) — see the coverage table above for exactly how
-  much of the miss rate that explains. `clock_offset_by_game.csv` has the
+  much of the miss rate that explains. `reports/clock_offset.md` has the
   full per-game breakdown.
 * **The offsets found are not simple truncation or rounding.** The original
   question was whether `clock_s` is a truncated or rounded reading of the
@@ -215,8 +214,8 @@ that another step would want to reuse.
   recorded pbp time trailing the actual rim crossing by over a second, not a
   sub-second rounding artifact), consistent with known lag in the NBA's
   play-by-play event logging relative to real game time, with a real
-  per-game/per-arena component on top (see `clock_offset_by_arena.csv`). See
-  `reports/clock_offset.md` for the full, current distribution.
+  per-game/per-arena component on top. See `reports/clock_offset.md` for the
+  full, current distribution (including the by-arena breakdown).
 
 ## Attack direction
 
