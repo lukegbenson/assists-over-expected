@@ -101,6 +101,8 @@ windows:
   offset_nudge_s: 0.5        # added to offset_s (toward 0) before using it to correct a previous time
   max_window_s: 24.0         # keep at most this many trailing seconds of a window
   min_window_s: 0.4          # below this many seconds, exclude the make as "too short"
+  min_start_coverage_s: 5.0        # a window missing tracking at its start is still kept if it has at least this many seconds
+  min_start_coverage_fraction: 0.8  # ...or at least this share of the originally intended (game-clock) length
   include_shot_clock: true   # whether to store a per-frame shot_clock array
 
 training:

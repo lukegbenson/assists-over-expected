@@ -96,9 +96,12 @@ def build_window(
     frame_table_q: pd.DataFrame,
     start_clock: float,
     end_ts_ms: float,
+    intended_length_s: float,
     max_window_s: float,
     max_gap_running_s: float,
     max_missing_frame_share: float,
+    min_start_coverage_s: float,
+    min_start_coverage_fraction: float,
     players_on_court: int,
 ) -> dict:
     """Resolve raw window bounds against one quarter's frame table, truncate
@@ -108,20 +111,42 @@ def build_window(
     ``frame_table_q`` is one quarter's output of
     ``nba_assists.direction.frame_table()`` with an added ``clock_running``
     column (``game_clock`` strictly decreasing vs. the previous native
-    frame), sorted by ts_ms.
+    frame), sorted by ts_ms. ``intended_length_s`` is ``start_clock`` minus
+    this make's own crossing game_clock -- how long (in game-clock seconds,
+    a good proxy for real seconds during live play) the window was meant to
+    span before any tracking-coverage limits shortened it.
 
-    ``coverage_gap`` is a genuine tracking gap during live play -- a gap
-    between native frames whose transition itself was clock-running -- not
-    the (expected, harmless) jump a dead-ball stretch leaves once its frozen
-    frames are filtered out. ``many_missing_frames`` reuses
-    ``inventory.max_missing_frame_share``'s exact definition (share of
-    frames missing a player or the ball) over the frames actually in range.
+    ``coverage_gap`` is True for two different kinds of problem:
+
+    - a genuine tracking gap *inside* the window actually built: a gap
+      between native frames, within ``[start_ts_ms, end_ts_ms]``, whose
+      transition itself was clock-running -- not the (expected, harmless)
+      jump a dead-ball stretch leaves once its frozen frames are filtered
+      out;
+    - missing tracking *before* the window's start that kept it from
+      covering what it was meant to: ``start_clock`` can reach further back
+      than this quarter's tracking data goes at all (e.g. a period whose
+      coverage starts partway through), or a large dropout can sit just
+      before the window's first kept frame -- either way, the resulting
+      window is accepted only if what's left still covers at least
+      ``min_start_coverage_s`` seconds, or at least
+      ``min_start_coverage_fraction`` of ``intended_length_s`` -- enough of
+      the lead-up to the shot (and any pass before it) to still be useful.
+
+    ``many_missing_frames`` reuses ``inventory.max_missing_frame_share``'s
+    exact definition (share of frames missing a player or the ball) over
+    the frames actually in range.
     """
     ts = frame_table_q["ts_ms"].to_numpy()
 
     before_start = frame_table_q.loc[frame_table_q["game_clock"] <= start_clock, "ts_ms"]
     raw_start_ts = float(before_start.min()) if len(before_start) else float(ts.min())
     raw_start_ts = max(raw_start_ts, float(ts.min()))
+    # start_clock (from the previous event, corrected) can land after end_ts_ms
+    # for a fast sequence (e.g. a putback within ~1s of game clock of the miss
+    # it follows) -- clamp so the reported bounds are never inverted; the
+    # resulting zero-ish length_s still correctly excludes it as "too short".
+    raw_start_ts = min(raw_start_ts, end_ts_ms)
 
     if end_ts_ms - raw_start_ts > max_window_s * 1000.0:
         raw_start_ts = end_ts_ms - max_window_s * 1000.0
@@ -147,7 +172,13 @@ def build_window(
     range_running = in_range["clock_running"].fillna(False).to_numpy()
     gap_ms = np.diff(range_ts)
     running_transition = range_running[1:]
-    coverage_gap = bool(np.any(gap_ms[running_transition] > max_gap_running_s * 1000.0))
+    internal_gap = bool(np.any(gap_ms[running_transition] > max_gap_running_s * 1000.0))
+
+    insufficient_start_coverage = not (
+        length_s >= min_start_coverage_s or length_s >= min_start_coverage_fraction * intended_length_s
+    )
+
+    coverage_gap = bool(internal_gap or insufficient_start_coverage)
 
     missing = (in_range["n_player_rows"] < players_on_court) | (in_range["n_ball_rows"] != 1)
     many_missing_frames = bool(missing.mean() > max_missing_frame_share)

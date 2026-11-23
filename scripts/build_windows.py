@@ -143,6 +143,8 @@ def main() -> int:
     offset_nudge_s = float(w.offset_nudge_s)
     max_window_s = float(w.max_window_s)
     min_window_s = float(w.min_window_s)
+    min_start_coverage_s = float(w.min_start_coverage_s)
+    min_start_coverage_fraction = float(w.min_start_coverage_fraction)
     include_shot_clock = bool(w.include_shot_clock)
 
     max_gap_running_s = float(cfg.inventory.max_gap_running_s)
@@ -279,9 +281,11 @@ def main() -> int:
             )
 
             end_ts_ms = float(make["cross_ts_ms"]) + end_buffer_s * 1000.0
+            intended_length_s = start_info["start_clock"] - float(make["cross_game_clock"])
             window = build_window(
-                qd["frame_table"], start_info["start_clock"], end_ts_ms,
-                max_window_s, max_gap_running_s, max_missing_frame_share, int(cfg.tracking.players_on_court),
+                qd["frame_table"], start_info["start_clock"], end_ts_ms, intended_length_s,
+                max_window_s, max_gap_running_s, max_missing_frame_share,
+                min_start_coverage_s, min_start_coverage_fraction, int(cfg.tracking.players_on_court),
             )
 
             if window["length_s"] < min_window_s:
