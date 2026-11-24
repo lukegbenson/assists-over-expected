@@ -19,7 +19,7 @@ Writes:
     (included or not): make_id, game_id, eventnum, label (assisted),
     included, reason, start_ts_ms, end_ts_ms, offset_used, length_s,
     length_frames, prev_event_type, many_missing_frames,
-    previous_event_problem.
+    previous_event_problem, dead_ball_buffer_applied.
   * reports/windows.md -- counts by exclusion reason, and the assisted
     share among included vs. excluded makes, overall and by team.
 """
@@ -49,6 +49,7 @@ INDEX_COLUMNS = [
     "make_id", "game_id", "eventnum", "label", "included", "reason",
     "start_ts_ms", "end_ts_ms", "offset_used", "length_s", "length_frames",
     "prev_event_type", "many_missing_frames", "previous_event_problem",
+    "dead_ball_buffer_applied",
 ]
 EXCLUSION_REASONS = ["not detected", "basket mismatch", "unclear direction", "too short", "coverage gap"]
 
@@ -82,6 +83,15 @@ def write_report(index: pd.DataFrame, direction_team_abbr: dict, report_path: Pa
     ]
     for reason in EXCLUSION_REASONS:
         lines.append(f"| {reason} | {int(reason_counts.get(reason, 0)):,} |")
+
+    n_buffered = int(index["dead_ball_buffer_applied"].fillna(False).sum())
+    lines += [
+        "",
+        "## Dead-ball buffer (windows.dead_ball_buffer_s)",
+        "",
+        f"- windows where a dead-ball stretch (e.g. an inbound entry after a stoppage) was detected "
+        f"and buffered: {n_buffered:,}",
+    ]
 
     included = index.loc[index["included"], "label"]
     excluded = index.loc[~index["included"], "label"]
@@ -144,6 +154,8 @@ def main() -> int:
     min_window_s = float(w.min_window_s)
     min_start_coverage_s = float(w.min_start_coverage_s)
     min_start_coverage_fraction = float(w.min_start_coverage_fraction)
+    dead_ball_buffer_s = float(w.dead_ball_buffer_s)
+    dead_ball_min_gap_s = float(w.dead_ball_min_gap_s)
     include_shot_clock = bool(w.include_shot_clock)
 
     max_gap_running_s = float(cfg.inventory.max_gap_running_s)
@@ -276,7 +288,9 @@ def main() -> int:
             window = build_window(
                 qd["frame_table"], start_info["start_clock"], end_ts_ms, intended_length_s,
                 max_window_s, max_gap_running_s, max_missing_frame_share,
-                min_start_coverage_s, min_start_coverage_fraction, int(cfg.tracking.players_on_court),
+                min_start_coverage_s, min_start_coverage_fraction,
+                dead_ball_buffer_s, dead_ball_min_gap_s,
+                int(cfg.tracking.players_on_court),
             )
 
             if window["length_s"] < min_window_s:
@@ -344,6 +358,7 @@ def _index_row(make, reason: str, start_info: dict | None = None, window: dict |
         "prev_event_type": make["prev_event_type"],
         "many_missing_frames": window["many_missing_frames"] if window else None,
         "previous_event_problem": start_info["previous_event_problem"] if start_info else None,
+        "dead_ball_buffer_applied": window["dead_ball_buffer_applied"] if window else None,
         "shooter_team_id": int(make["shooter_team_id"]),
     }
 

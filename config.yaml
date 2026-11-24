@@ -102,6 +102,8 @@ windows:
   min_window_s: 0.4          # below this many seconds, exclude the make as "too short"
   min_start_coverage_s: 5.0        # a window missing tracking at its start is still kept if it has at least this many seconds
   min_start_coverage_fraction: 0.8  # ...or at least this share of the originally intended (game-clock) length
+  dead_ball_buffer_s: 6.0    # real seconds of dead-ball time to keep before a stoppage's live resumption (e.g. an inbound entry)
+  dead_ball_min_gap_s: 1.0   # a stoppage shorter than this isn't treated as real dead-ball time (filters a period's first-tracked-frame artifact, which is never "running" but isn't a stoppage)
   include_shot_clock: true   # whether to store a per-frame shot_clock array
 
 # --- Pass attribution ---------------------------------------------------------

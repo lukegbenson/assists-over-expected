@@ -92,6 +92,27 @@ def rotate_and_normalize(
     return x - basket_left_x, y - width_y / 2.0
 
 
+def find_live_stretch_start(frame_table_q: pd.DataFrame, end_ts_ms: float) -> float:
+    """Scanning backward from the native frame at or before ``end_ts_ms``,
+    the start of the final, uninterrupted ``clock_running`` stretch that
+    reaches it -- the moment live play most recently resumed before the
+    shot, after whatever dead-ball stoppage (if any) immediately preceded
+    it. Everything before this point is a different possession attempt,
+    whether or not it contains real action of its own: once the clock
+    stops, the next scoring possession starts fresh at the restart, not
+    before it.
+
+    ``frame_table_q`` must be sorted by ``ts_ms`` (as
+    ``nba_assists.direction.frame_table()`` returns it).
+    """
+    ts = frame_table_q["ts_ms"].to_numpy()
+    running = frame_table_q["clock_running"].fillna(False).to_numpy()
+    i = int(np.searchsorted(ts, end_ts_ms, side="right")) - 1
+    while i > 0 and running[i - 1]:
+        i -= 1
+    return float(ts[i])
+
+
 def build_window(
     frame_table_q: pd.DataFrame,
     start_clock: float,
@@ -102,11 +123,14 @@ def build_window(
     max_missing_frame_share: float,
     min_start_coverage_s: float,
     min_start_coverage_fraction: float,
+    dead_ball_buffer_s: float,
+    dead_ball_min_gap_s: float,
     players_on_court: int,
 ) -> dict:
     """Resolve raw window bounds against one quarter's frame table, truncate
-    to at most max_window_s, filter to clock-running frames, and compute
-    length/coverage-gap/missing-frame diagnostics.
+    to at most max_window_s, filter to clock-running frames (plus a
+    dead-ball buffer, see below), and compute length/coverage-gap/
+    missing-frame diagnostics.
 
     ``frame_table_q`` is one quarter's output of
     ``nba_assists.direction.frame_table()`` with an added ``clock_running``
@@ -116,22 +140,48 @@ def build_window(
     a good proxy for real seconds during live play) the window was meant to
     span before any tracking-coverage limits shortened it.
 
-    ``coverage_gap`` is True for two different kinds of problem:
+    **Dead-ball buffer.** A stoppage (timeout, throw-in, jump ball, a foul
+    call, ...) anywhere in the window leaves the game clock frozen for real
+    seconds. Once the clock stops, the next scoring possession starts fresh
+    at the restart -- whatever came before belongs to a different
+    possession attempt, whether or not it has real action of its own.
+    ``find_live_stretch_start`` finds the moment live play most recently
+    resumed before the shot, scanning backward through the raw frame
+    timeline (immune to a single noisy clock-running frame right at a
+    restart, isolated by dead-ball frames on both sides from the real
+    resumption, which could be seconds later). When that point is more
+    than ``dead_ball_min_gap_s`` seconds later than ``raw_start_ts`` --
+    i.e. a real stoppage was found, not just the lone boundary frame every
+    period's first tracked moment has (there's no earlier frame to diff
+    against, so it's never "running", without that meaning anything was
+    stopped) -- reach back ``dead_ball_buffer_s`` real seconds before the
+    resumption (never past ``raw_start_ts`` itself) and keep every raw
+    frame across that reach, not just the clock-running ones: the
+    dead-ball stretch is then a normal part of the window, same as any
+    other, and everything before it is dropped.
+
+    ``coverage_gap`` is True for any of three different kinds of problem:
 
     - a genuine tracking gap *inside* the window actually built: a gap
       between native frames, within ``[start_ts_ms, end_ts_ms]``, whose
       transition itself was clock-running -- not the (expected, harmless)
       jump a dead-ball stretch leaves once its frozen frames are filtered
       out;
+    - once the dead-ball buffer has been applied, any gap at all within
+      the window (nothing was filtered out of it, so a gap there is a
+      real missing-data problem, not an expected dead-ball skip);
     - missing tracking *before* the window's start that kept it from
-      covering what it was meant to: ``start_clock`` can reach further back
-      than this quarter's tracking data goes at all (e.g. a period whose
-      coverage starts partway through), or a large dropout can sit just
-      before the window's first kept frame -- either way, the resulting
-      window is accepted only if what's left still covers at least
-      ``min_start_coverage_s`` seconds, or at least
-      ``min_start_coverage_fraction`` of ``intended_length_s`` -- enough of
-      the lead-up to the shot (and any pass before it) to still be useful.
+      covering what it was meant to, when no dead-ball buffer applies:
+      ``start_clock`` can reach further back than this quarter's tracking
+      data goes at all (e.g. a period whose coverage starts partway
+      through), or a large dropout can sit just before the window's first
+      kept frame -- either way, the window is accepted only if what's
+      left still covers at least ``min_start_coverage_s`` seconds, or at
+      least ``min_start_coverage_fraction`` of ``intended_length_s``. This
+      check is skipped once the dead-ball buffer applies: at that point
+      the window has already been deliberately redefined around the
+      restart, not the original ``intended_length_s`` target, and "as far
+      back as the buffer can reach" is itself the accepted outcome.
 
     ``many_missing_frames`` reuses ``inventory.max_missing_frame_share``'s
     exact definition (share of frames missing a player or the ball) over
@@ -151,8 +201,18 @@ def build_window(
     if end_ts_ms - raw_start_ts > max_window_s * 1000.0:
         raw_start_ts = end_ts_ms - max_window_s * 1000.0
 
+    live_start_ts = find_live_stretch_start(frame_table_q, end_ts_ms)
+    dead_ball_buffer_applied = bool((live_start_ts - raw_start_ts) > dead_ball_min_gap_s * 1000.0)
+    if dead_ball_buffer_applied:
+        raw_start_ts = max(live_start_ts - dead_ball_buffer_s * 1000.0, raw_start_ts)
+
     in_range = frame_table_q.loc[(frame_table_q["ts_ms"] >= raw_start_ts) & (frame_table_q["ts_ms"] <= end_ts_ms)]
-    kept = in_range.loc[in_range["clock_running"].fillna(False)]
+    # with the buffer applied, the window now reaches back through the
+    # dead-ball stretch itself, which needs keeping regardless of
+    # clock_running -- everything from the real live resumption onward is
+    # already clock-running, so the whole range is kept, not just the
+    # clock-running subset.
+    kept = in_range if dead_ball_buffer_applied else in_range.loc[in_range["clock_running"].fillna(False)]
     kept_ts = kept["ts_ms"].to_numpy()
 
     if len(kept_ts) < 2:
@@ -164,17 +224,24 @@ def build_window(
             "many_missing_frames": True,
             "start_ts_ms": raw_start_ts,
             "end_ts_ms": end_ts_ms,
+            "dead_ball_buffer_applied": dead_ball_buffer_applied,
         }
 
     length_s = float((kept_ts[-1] - kept_ts[0]) / 1000.0)
 
     range_ts = in_range["ts_ms"].to_numpy()
-    range_running = in_range["clock_running"].fillna(False).to_numpy()
     gap_ms = np.diff(range_ts)
-    running_transition = range_running[1:]
-    internal_gap = bool(np.any(gap_ms[running_transition] > max_gap_running_s * 1000.0))
+    if dead_ball_buffer_applied:
+        # nothing was filtered out of in_range in this case (kept == in_range),
+        # so any gap here is a real missing-data problem, not an expected
+        # dead-ball skip.
+        internal_gap = bool(np.any(gap_ms > max_gap_running_s * 1000.0))
+    else:
+        range_running = in_range["clock_running"].fillna(False).to_numpy()
+        running_transition = range_running[1:]
+        internal_gap = bool(np.any(gap_ms[running_transition] > max_gap_running_s * 1000.0))
 
-    insufficient_start_coverage = not (
+    insufficient_start_coverage = False if dead_ball_buffer_applied else not (
         length_s >= min_start_coverage_s or length_s >= min_start_coverage_fraction * intended_length_s
     )
 
@@ -191,6 +258,7 @@ def build_window(
         "many_missing_frames": many_missing_frames,
         "start_ts_ms": float(kept_ts[0]),
         "end_ts_ms": float(kept_ts[-1]),
+        "dead_ball_buffer_applied": dead_ball_buffer_applied,
     }
 
 

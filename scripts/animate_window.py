@@ -2,15 +2,21 @@
 
     .venv/bin/python scripts/animate_window.py <game_id> <eventnum>
 
-Replays the raw tracking frames for data/windows/index.parquet's window
-around one make, in the same visual style as scripts/vendor/'s play
-animation (team-colored circles, jersey numbers, a home/visitor roster
-table, the same court.png) -- reusing scripts/vendor/Team.py for team
-colors/names. Two reference times are annotated and highlighted once the
-animation's current frame reaches them: the play-by-play's own recorded
-clock_s, and this make's detected rim-crossing time
-(data/derived/make_times.parquet). The title is the play's own
-description from data/derived/makes.parquet.
+Replays the *actual* window scripts/build_windows.py built for one make --
+recomputed fresh here with the same resolve_window_start()/build_window()
+call, so the frames shown are exactly ``kept_ts`` (what ends up in the
+model's pos/mask/roles arrays), not just every raw frame between some start
+and end timestamp. A window that skips a mid-possession dead-ball stretch
+(an ordinary stoppage) shows that same skip here; one with a buffered
+dead-ball stretch (e.g. an inbound entry right after a timeout -- see
+windows.dead_ball_buffer_s) shows it filled in, exactly as the model sees
+it. Styled like scripts/vendor/'s play animation (team-colored circles,
+jersey numbers, a home/visitor roster table, the same court.png) --
+reusing scripts/vendor/Team.py for team colors/names. Two reference times
+are annotated and highlighted once the animation's current frame reaches
+them: the play-by-play's own recorded clock_s, and this make's detected
+rim-crossing time (data/derived/make_times.parquet). The title is the
+play's own description from data/derived/makes.parquet.
 
 Requires a build_windows.py-produced window (an index.parquet row with a
 computed start/end) -- a make excluded before a window was ever built (not
@@ -46,6 +52,8 @@ sys.path.insert(0, str(VENDOR_DIR))
 from Team import Team  # noqa: E402
 
 from nba_assists.config import Config, get_config  # noqa: E402
+from nba_assists.direction import frame_table  # noqa: E402
+from nba_assists.windows import build_window, resolve_window_start  # noqa: E402
 
 # Matches scripts/vendor/Constant.py exactly, for the same look.
 X_MIN, X_MAX, Y_MIN, Y_MAX = 0.0, 100.0, 0.0, 50.0
@@ -95,6 +103,9 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
     mt_rows = make_times[(make_times["game_id"] == game_id) & (make_times["eventnum"] == eventnum)]
     mt = mt_rows.iloc[0] if len(mt_rows) else None
 
+    # only used to surface a friendly exclusion reason when no window was
+    # ever attempted (not detected, basket mismatch, unclear direction) --
+    # the window actually animated is recomputed fresh in build_event_animation().
     index = pd.read_parquet(windows_dir / "index.parquet")
     idx_rows = index[(index["game_id"] == game_id) & (index["eventnum"] == eventnum)]
     if idx_rows.empty or pd.isna(idx_rows.iloc[0]["start_ts_ms"]):
@@ -103,7 +114,12 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
             f"no built window for game_id={game_id!r} eventnum={eventnum} (reason: {reason!r}) -- "
             "run scripts/build_windows.py first, or pick a make with a built window"
         )
-    idx = idx_rows.iloc[0]
+
+    prev_eventnum = make["prev_eventnum"]
+    prev_mt = None
+    if pd.notna(prev_eventnum):
+        prev_rows = make_times[(make_times["game_id"] == game_id) & (make_times["eventnum"] == int(prev_eventnum))]
+        prev_mt = prev_rows.iloc[0] if len(prev_rows) else None
 
     passer = None
     passers_path = derived_dir / "passers.parquet"
@@ -114,6 +130,9 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
             passer = passer_rows.iloc[0]
 
     return {
+        "make": make,
+        "mt": mt,
+        "prev_mt": prev_mt,
         "period": int(make["period"]),
         "clock_s": float(make["clock_s"]),
         "description": str(make["description"]),
@@ -122,13 +141,47 @@ def _event_info(game_id: str, eventnum: int, derived_dir: Path, windows_dir: Pat
         "cross_game_clock": float(mt["cross_game_clock"])
         if mt is not None and pd.notna(mt["cross_game_clock"])
         else None,
-        "start_ts_ms": float(idx["start_ts_ms"]),
-        "end_ts_ms": float(idx["end_ts_ms"]),
         "shooter_id": int(make["shooter_id"]),
         "passer_id": int(passer["passer_id"]) if passer is not None and pd.notna(passer["passer_id"]) else None,
         "passer_is_assist": bool(passer["assisted"]) if passer is not None else False,
         "passer_available": passer is not None,
     }
+
+
+def _resolve_kept_ts(cfg: Config, info: dict, frame_table_q: pd.DataFrame) -> np.ndarray:
+    """The make's real window, recomputed with the exact same
+    resolve_window_start()/build_window() call scripts/build_windows.py
+    uses -- so the frames animated are exactly what ended up in the
+    model's pos/mask/roles arrays, not just every raw frame between some
+    start and end timestamp.
+    """
+    make, mt, prev_mt = info["make"], info["mt"], info["prev_mt"]
+    w = cfg.windows
+    start_info = resolve_window_start(
+        prev_same_period=bool(make["prev_same_period"]),
+        prev_msgtype=make["prev_msgtype"],
+        prev_clock_s=make["prev_clock_s"],
+        made_shot_code=int(cfg.pbp.event_types.made_shot),
+        prev_make_detected=bool(prev_mt["detected"]) if prev_mt is not None else None,
+        prev_make_cross_game_clock=float(prev_mt["cross_game_clock"])
+        if prev_mt is not None and pd.notna(prev_mt["cross_game_clock"])
+        else None,
+        offset_s=float(mt["offset_s"]) if pd.notna(mt["offset_s"]) else 0.0,
+        period_max_game_clock=float(frame_table_q["game_clock"].max()),
+        start_margin_s=float(w.start_margin_s),
+        after_prev_make_s=float(w.after_prev_make_s),
+        offset_nudge_s=float(w.offset_nudge_s),
+    )
+    end_ts_ms = float(mt["cross_ts_ms"]) + float(w.end_buffer_s) * 1000.0
+    intended_length_s = start_info["start_clock"] - float(mt["cross_game_clock"])
+    window = build_window(
+        frame_table_q, start_info["start_clock"], end_ts_ms, intended_length_s,
+        float(w.max_window_s), float(cfg.inventory.max_gap_running_s), float(cfg.inventory.max_missing_frame_share),
+        float(w.min_start_coverage_s), float(w.min_start_coverage_fraction),
+        float(w.dead_ball_buffer_s), float(w.dead_ball_min_gap_s),
+        int(cfg.tracking.players_on_court),
+    )
+    return window["kept_ts"]
 
 
 def build_event_animation(
@@ -163,13 +216,15 @@ def build_event_animation(
     tracking = pd.read_parquet(
         path, columns=["ts_ms", "quarter", "game_clock", "shot_clock", "team_id", "player_id", "x", "y", "z"]
     )
-    window = tracking[
-        (tracking["quarter"] == info["period"])
-        & (tracking["ts_ms"] >= info["start_ts_ms"])
-        & (tracking["ts_ms"] <= info["end_ts_ms"])
-    ]
-    if window.empty:
-        raise ValueError("no tracking frames found in this window")
+    quarter_tracking = tracking[tracking["quarter"] == info["period"]]
+    frame_table_q = frame_table(quarter_tracking, cfg)
+    frame_table_q["clock_running"] = frame_table_q.groupby("period")["game_clock"].diff() < 0
+
+    kept_ts = _resolve_kept_ts(cfg, info, frame_table_q)
+    if len(kept_ts) < 2:
+        raise ValueError("the real window (recomputed) has fewer than 2 usable frames -- nothing to animate")
+
+    window = quarter_tracking[(quarter_tracking["ts_ms"] >= kept_ts[0]) & (quarter_tracking["ts_ms"] <= kept_ts[-1])]
 
     roster = pd.read_csv(roster_dir / (path.stem + ".csv"))
     name_jersey = {
@@ -179,7 +234,10 @@ def build_event_animation(
 
     native_hz = float(cfg.tracking.source_frame_rate_hz)
     stride = max(1, round(native_hz / display_hz))
-    ts_values = np.array(sorted(window["ts_ms"].unique()))[::stride]
+    # the real window's own frames -- exactly what build_windows.py kept for
+    # the model, not every raw frame between kept_ts[0] and kept_ts[-1]
+    # (which would silently reintroduce any mid-window dead-ball skip).
+    ts_values = kept_ts[::stride]
     players = window[window["team_id"] != ball_team_id]
     player_ids = sorted(int(p) for p in players["player_id"].unique())
     team_by_player = players.groupby("player_id")["team_id"].first()

@@ -13,41 +13,41 @@ lower false-NONE rate -- see config.yaml's passer: section)
 
 - training games: 429; held-out games: 184
 - training sample (assisted makes): 2,000
-- training agreement at the chosen combination: 94.35% (false-NONE rate 3.35%)
+- training agreement at the chosen combination: 94.25% (false-NONE rate 3.65%)
 
 ## Held-out accuracy
 
-- assisted makes evaluated: 6,854
-- **agreement with the known assister: 94.76%**
-- **false-NONE rate (assisted makes traced as NONE): 3.22%**
+- assisted makes evaluated: 7,030
+- **agreement with the known assister: 94.67%**
+- **false-NONE rate (assisted makes traced as NONE): 3.27%**
 
 ## Overall (every included make, assisted or not)
 
-- makes with a traced passer attempt: 38,666
-- share traced as NONE: 16.44%
-- share where the run active at the shot wasn't the recorded shooter's (trace_problem): 7.59%
+- makes with a traced passer attempt: 39,506
+- share traced as NONE: 15.55%
+- share where the run active at the shot wasn't the recorded shooter's (trace_problem): 7.56%
 
 ## Example disagreements (assisted makes; traced passer vs. the known assister)
 
 | game_id | eventnum | description | assister_id | traced_passer_id | trace_problem | set |
 |---|---|---|---|---|---|---|
-| 0021500082 | 211 | Mark Morris 8' Turnaround Bank Shot (4 PTS) (Bledsoe 2 AST) | 202339 | 202688 | False | holdout |
-| 0021500283 | 145 | Grant 1' Layup (2 PTS) (Galloway 1 AST) | 204038 |  | False | holdout |
-| 0021500183 | 38 | Waiters 2' Driving Layup (4 PTS) (Ibaka 1 AST) | 201586 | 201566 | False | train |
-| 0021500236 | 344 | Curry 24' 3PT Jump Shot (36 PTS) (Iguodala 2 AST) | 2738 |  | True | train |
-| 0021500487 | 119 | W. Johnson 24' 3PT Jump Shot (3 PTS) (Prigioni 1 AST) | 203143 |  | True | holdout |
-| 0021500328 | 378 | Bazemore 1' Driving Layup (9 PTS) (Schroder 1 AST) | 203471 |  | True | train |
-| 0021500661 | 299 | Harris 2' Driving Layup (8 PTS) (Arthur 3 AST) | 201589 |  | False | holdout |
-| 0021500201 | 105 | Russell 25' 3PT Jump Shot (5 PTS) (Bass 1 AST) | 101138 | 101150 | True | train |
-| 0021500157 | 190 | Warren  Running Dunk (3 PTS) (Knight 3 AST) | 202688 |  | False | train |
-| 0021500320 | 188 | Walker 1' Running Layup (7 PTS) (Batum 7 AST) | 201587 |  | False | train |
-| 0021500341 | 346 | Booker  Running Dunk (6 PTS) (Hayward 2 AST) | 202330 | 203481 | True | train |
-| 0021500435 | 504 | Brown 2' Running Layup (2 PTS) (Huertas 4 AST) | 1626273 |  | False | train |
-| 0021500310 | 281 | Plumlee  Cutting Dunk Shot (3 PTS) (Lillard 5 AST) | 203081 | 203468 | False | train |
-| 0021500064 | 402 | Ariza 24' 3PT Jump Shot (17 PTS) (Terry 2 AST) | 1891 | 201951 | True | train |
-| 0021500479 | 392 | Hayward 25' 3PT Jump Shot (12 PTS) (Booker 2 AST) | 202344 |  | True | train |
-| 0021500029 | 24 | Harris 2' Reverse Layup (2 PTS) (Gallinari 1 AST) | 201568 | 203530 | False | train |
-| 0021500350 | 131 | Oubre Jr. 6' Jump Shot (3 PTS) (Dudley 2 AST) | 201162 |  | False | holdout |
-| 0021500220 | 197 | Ariza 1' Driving Layup (6 PTS) (Harden 2 AST) | 201935 | 2730 | False | train |
-| 0021500474 | 409 | Prigioni 26' 3PT Jump Shot (3 PTS) (W. Johnson 1 AST) | 202325 | 2037 | False | train |
-| 0021500531 | 2 | Gordon 26' 3PT Jump Shot (3 PTS) (Davis 1 AST) | 203076 | 201936 | False | train |
+| 0021500083 | 52 | Barnes  Dunk (9 PTS) (Thompson 1 AST) | 202691 | 201939 | True | train |
+| 0021500063 | 505 | Williams 24' 3PT Jump Shot (22 PTS) (Thompson 1 AST) | 202684 |  | False | train |
+| 0021500623 | 521 | Crowder 2' Running Layup (9 PTS) (Bradley 5 AST) | 202340 |  | False | holdout |
+| 0021500246 | 464 | Batum 25' 3PT Jump Shot (15 PTS) (Lamb 2 AST) | 203087 | 101107 | False | train |
+| 0021500191 | 289 | James  Running Layup (7 PTS) (Dellavedova 2 AST) | 203521 |  | False | train |
+| 0021500339 | 325 | Gordon 26' 3PT Jump Shot (13 PTS) (Holiday 3 AST) | 201950 | 201936 | True | train |
+| 0021500273 | 486 | Hickson  Dunk (5 PTS) (Mudiay 7 AST) | 1626144 | 202702 | True | train |
+| 0021500415 | 136 | Thornton 24' 3PT Jump Shot (3 PTS) (Motiejunas 2 AST) | 202700 |  | False | train |
+| 0021500334 | 363 | Hezonja 26' 3PT Jump Shot (6 PTS) (Gordon 2 AST) | 203932 |  | False | train |
+| 0021500126 | 444 | Crawford 25' 3PT Jump Shot (18 PTS) (Prigioni 3 AST) | 203143 |  | False | train |
+| 0021500352 | 124 | McCollum 18' Pullup Jump Shot (9 PTS) (Leonard 1 AST) | 203086 | 202334 | False | holdout |
+| 0021500339 | 336 | Davis 17' Jump Shot (14 PTS) (Holiday 5 AST) | 201950 |  | False | train |
+| 0021500124 | 423 | Winslow 1' Layup (6 PTS) (Bosh 4 AST) | 2547 | 2757 | False | holdout |
+| 0021500061 | 322 | Ginobili 3' Driving Layup (7 PTS) (Mills 1 AST) | 201988 | 200746 | False | holdout |
+| 0021500103 | 289 | Leonard  Dunk (15 PTS) (Duncan 1 AST) | 1495 |  | False | train |
+| 0021500058 | 591 | McLemore  Dunk (2 PTS) (Cauley-Stein 1 AST) | 1626161 |  | False | train |
+| 0021500136 | 22 | Gallinari 24' 3PT Jump Shot (3 PTS) (Mudiay 2 AST) | 1626144 | 201581 | False | train |
+| 0021500184 | 372 | Hayward  Running Dunk (16 PTS) (Burke 2 AST) | 203504 |  | False | train |
+| 0021500137 | 240 | Robinson 2' Cutting Layup Shot (2 PTS) (Jack 5 AST) | 101127 | 202711 | True | train |
+| 0021500517 | 506 | Collison 2' Layup (14 PTS) (Rondo 17 AST) | 200765 |  | False | holdout |

@@ -13,6 +13,7 @@ from nba_assists.windows import (
     compute_offset_used,
     resolve_window_start,
     rotate_and_normalize,
+    find_live_stretch_start,
 )
 
 MADE_SHOT_CODE = 1
@@ -111,7 +112,8 @@ def test_build_window_normal_dense_window():
     result = build_window(
         ft, start_clock=clock0, end_ts_ms=ts0 + 19 * 40, intended_length_s=0.76,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_frames"] == 19
     assert result["length_s"] == pytest.approx(0.72)
@@ -124,7 +126,8 @@ def test_build_window_too_few_frames_is_degenerate():
     result = build_window(
         ft, start_clock=10.0, end_ts_ms=100_000.0, intended_length_s=0.0,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_frames"] <= 1
     assert result["coverage_gap"] is True
@@ -146,7 +149,8 @@ def test_build_window_clamps_a_start_clock_that_lands_after_the_end():
     result = build_window(
         ft, start_clock=clock0 - 0.4, end_ts_ms=end_ts_ms, intended_length_s=0.2,  # only reached at i=10
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["start_ts_ms"] <= result["end_ts_ms"]
     assert result["length_s"] == 0.0
@@ -168,7 +172,8 @@ def test_build_window_flags_a_genuine_live_play_gap():
     result = build_window(
         ft, start_clock=clock0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=6.08,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["coverage_gap"] is True
 
@@ -190,7 +195,8 @@ def test_build_window_flags_tracking_that_starts_partway_through_the_period():
     result = build_window(
         ft, start_clock=20.0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=20.0 - 11.92,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["coverage_gap"] is True
 
@@ -216,7 +222,8 @@ def test_build_window_flags_a_dropout_right_before_the_computed_start():
     result = build_window(
         ft, start_clock=16.0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=16.0 - 9.96,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["coverage_gap"] is True
 
@@ -238,7 +245,8 @@ def test_build_window_allows_a_short_start_gap_under_the_absolute_floor():
     result = build_window(
         ft, start_clock=start_clock, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=start_clock - final_game_clock,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_s"] == pytest.approx(5.16)
     assert result["coverage_gap"] is False
@@ -261,7 +269,8 @@ def test_build_window_allows_a_short_start_gap_under_the_fraction_floor():
     result = build_window(
         ft, start_clock=start_clock, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=2.0,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_s"] == pytest.approx(1.76)
     assert result["coverage_gap"] is False
@@ -283,28 +292,67 @@ def test_build_window_flags_a_start_gap_that_fails_both_thresholds():
     result = build_window(
         ft, start_clock=start_clock, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=20.0,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_s"] == pytest.approx(0.36)
     assert result["coverage_gap"] is True
 
 
-def test_build_window_does_not_flag_a_dead_ball_stretch_as_a_gap():
+def test_build_window_discards_real_action_before_a_later_stoppage():
+    # ~2s of substantial, real live play (i=0..50), then an 8s real-time
+    # freeze (the clock is FROZEN, not running: a timeout/foul/turnover),
+    # then play resumes. There's no "is the leading run substantial"
+    # exception: once a stoppage is found anywhere in the window, the
+    # window always re-anchors on the last resumption minus the buffer,
+    # discarding everything before it -- a different possession attempt,
+    # whether or not it had real action of its own.
     ts0, clock0 = 100_000.0, 10.0
+    leading = [
+        {"ts_ms": ts0 + i * 40, "game_clock": clock0 - i * 0.04, "n_player_rows": 10, "n_ball_rows": 1,
+         "clock_running": i > 0}
+        for i in range(51)  # ts0 .. ts0+2000, game_clock 10.0 .. 8.0
+    ]
+    # an 8s freeze with continuous native frames (game_clock frozen at 8.0),
+    # so the buffer's 6s reach-back (landing at ts0+4040) finds a real frame.
+    frozen = [
+        {"ts_ms": t, "game_clock": 8.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False}
+        for t in np.arange(ts0 + 2040, ts0 + 10001, 40.0)
+    ]
+    trailing = [
+        {"ts_ms": ts0 + 10040, "game_clock": 7.96, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": ts0 + 10080, "game_clock": 7.92, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+    ]
+    ft = _ftable(leading + frozen + trailing)
+    result = build_window(
+        ft, start_clock=clock0, end_ts_ms=ts0 + 10080, intended_length_s=10.08,
+        max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
+    )
+    assert result["dead_ball_buffer_applied"] is True
+    assert result["start_ts_ms"] == pytest.approx(ts0 + 4040)  # 6s before the resumption, well into the freeze
+    assert result["length_s"] == pytest.approx(6.04)
+    assert result["coverage_gap"] is False
+
+
+def test_build_window_leaves_a_window_with_no_stoppage_untouched():
+    ts0, clock0 = 200_000.0, 10.0
     rows = [
-        {"ts_ms": ts0, "game_clock": clock0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
-        {"ts_ms": ts0 + 40, "game_clock": clock0 - 0.04, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
-        # 6s real gap, but the clock is FROZEN across it (a timeout/foul) -> not running, not a coverage gap
-        {"ts_ms": ts0 + 40 + 6000, "game_clock": clock0 - 0.04, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
-        {"ts_ms": ts0 + 40 + 6000 + 40, "game_clock": clock0 - 0.08, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": ts0 + i * 40, "game_clock": clock0 - i * 0.04, "n_player_rows": 10, "n_ball_rows": 1,
+         "clock_running": i > 0}
+        for i in range(51)
     ]
     ft = _ftable(rows)
     result = build_window(
-        ft, start_clock=clock0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=0.08,
+        ft, start_clock=clock0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=2.0,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
+    assert result["dead_ball_buffer_applied"] is False
     assert result["coverage_gap"] is False
+    assert result["start_ts_ms"] == pytest.approx(ts0 + 40)  # the one boundary-artifact frame, unaffected
 
 
 def test_build_window_flags_many_missing_frames():
@@ -320,7 +368,8 @@ def test_build_window_flags_many_missing_frames():
     result = build_window(
         ft, start_clock=clock0, end_ts_ms=ts0 + 19 * 40, intended_length_s=0.76,
         max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["many_missing_frames"] is True
 
@@ -336,10 +385,96 @@ def test_build_window_truncates_to_max_window_s():
     result = build_window(
         ft, start_clock=clock0, end_ts_ms=ts0 + 49 * 40, intended_length_s=0.5,
         max_window_s=0.5, max_gap_running_s=5.0, max_missing_frame_share=0.02,
-        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8, players_on_court=10,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
     )
     assert result["length_s"] <= 0.5 + 1e-6
     assert result["start_ts_ms"] > ts0  # the early frames were trimmed off
+
+
+def _running_ftable(ts_running_pairs: list[tuple[float, bool]]) -> pd.DataFrame:
+    return _ftable(
+        [
+            {"ts_ms": t, "game_clock": 0.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": r}
+            for t, r in ts_running_pairs
+        ]
+    )
+
+
+def test_find_live_stretch_start_stops_right_after_a_dead_to_live_transition():
+    ft = _running_ftable([(0.0, True), (40.0, True), (6000.0, False), (6040.0, True), (6080.0, True)])
+    assert find_live_stretch_start(ft, end_ts_ms=6080.0) == pytest.approx(6040.0)
+
+
+def test_find_live_stretch_start_ignores_an_isolated_blip():
+    # 4000 is a lone clock-running frame isolated by dead frames on both
+    # sides from the real resumption at 8040 -- the scan must not stop there.
+    ft = _running_ftable([(0.0, False), (4000.0, True), (8000.0, False), (8040.0, True), (8080.0, True)])
+    assert find_live_stretch_start(ft, end_ts_ms=8080.0) == pytest.approx(8040.0)
+
+
+def test_find_live_stretch_start_scans_to_the_start_when_nothing_stopped():
+    ts = np.arange(0.0, 500.0, 40.0)
+    ft = _running_ftable([(t, i > 0) for i, t in enumerate(ts)])
+    # stops right after the one boundary-artifact frame (the very first
+    # frame of any series has no predecessor to diff against, so it's
+    # never "running" -- that's not a real stoppage).
+    assert find_live_stretch_start(ft, end_ts_ms=ts[-1]) == pytest.approx(ts[1])
+
+
+def test_build_window_applies_dead_ball_buffer_around_an_isolated_blip():
+    # Mirrors a real inbound-after-timeout case: a lone clock-running frame
+    # (101_000) right as the stoppage begins looks "live" in isolation, but
+    # is isolated by dead-ball frames on both sides from the real
+    # resumption (105_600) -- plenty of earlier data exists (back to
+    # 95_000), so the full 6s buffer before the real resumption is
+    # achieved exactly, sweeping in the dead frames at 99_600/99_640 too.
+    rows = [
+        {"ts_ms": 95_000.0, "game_clock": 20.5, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 99_600.0, "game_clock": 20.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 99_640.0, "game_clock": 20.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 101_000.0, "game_clock": 19.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 101_040.0, "game_clock": 19.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 105_600.0, "game_clock": 18.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 105_640.0, "game_clock": 17.96, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 105_680.0, "game_clock": 17.92, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+    ]
+    ft = _ftable(rows)
+    result = build_window(
+        ft, start_clock=20.5, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=6.08,
+        max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
+    )
+    assert result["dead_ball_buffer_applied"] is True
+    assert result["start_ts_ms"] == pytest.approx(99_600.0)  # exactly 6s before the real resumption
+    assert result["length_frames"] == 7  # the 95_000 frame (before the buffer target) stays excluded
+    assert result["coverage_gap"] is False
+
+
+def test_build_window_dead_ball_buffer_clamped_when_not_enough_data():
+    # same shape, but tracking only reaches back to 100_000 -- less than a
+    # full 6s before the 105_600 resumption -- so the buffer goes as far
+    # back as it can rather than past the earliest available frame.
+    rows = [
+        {"ts_ms": 100_000.0, "game_clock": 20.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 101_000.0, "game_clock": 19.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 101_040.0, "game_clock": 19.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": False},
+        {"ts_ms": 105_600.0, "game_clock": 18.0, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 105_640.0, "game_clock": 17.96, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+        {"ts_ms": 105_680.0, "game_clock": 17.92, "n_player_rows": 10, "n_ball_rows": 1, "clock_running": True},
+    ]
+    ft = _ftable(rows)
+    result = build_window(
+        ft, start_clock=20.0, end_ts_ms=rows[-1]["ts_ms"], intended_length_s=5.68,
+        max_window_s=100.0, max_gap_running_s=5.0, max_missing_frame_share=0.02,
+        min_start_coverage_s=5.0, min_start_coverage_fraction=0.8,
+        dead_ball_buffer_s=6.0, dead_ball_min_gap_s=1.0, players_on_court=10,
+    )
+    assert result["dead_ball_buffer_applied"] is True
+    assert result["start_ts_ms"] == pytest.approx(100_000.0)  # clamped to the earliest available frame
+    assert result["length_frames"] == 6
+    assert result["coverage_gap"] is False
 
 
 def test_build_agent_tracks_masks_absent_frames_and_sets_roles():
